@@ -1,0 +1,484 @@
+@model BYAN.Areas.Reports.DAL._viewModel.InitialData
+
+@{
+    ViewBag.Title = ViewBag.reportName;
+    Layout = "~/Views/Shared/_Layout.cshtml";
+}
+
+@section Styles{
+    <link href="@Url.Content("~/Content/css/jquery-ui.css")" rel="stylesheet" />
+    <link href="@Url.Content("~/Content/css/multiselect.css")" rel="stylesheet" />
+}
+<div id="div-report-region">
+    <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
+        <section class="panel panel-primary">
+            @*<header class="panel-heading" style="text-transform:uppercase">
+            <span class="pull-left">UW And Sales Reports</span>
+        </header>*@
+           
+            <div class="panel-body">
+                <div style="display:none;">
+                    <input type="text" id="Username" autocomplete="username">
+                    <input type="password" id="Password" autocomplete="current-password">
+                </div>
+                <div class="form-group col-md-4 col-lg-4 col-sm-2 col-xs-12">
+                    <label class="control-lable">Report Type</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <select class="form-control" style="border-radius:4px;" data-bind="options:data.reportType ,optionsText:'description',optionsValue:'value',value:data.param.reportType"></select>
+                    </div>
+                </div>
+                <div class="form-group col-md-4 col-lg-4 col-sm-2 col-xs-12">
+                    <label class="control-lable">Report Name</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <select class="form-control" id="REPORT_NAME" style="border-radius:4px;" data-bind="options:filteredReportNames ,optionsText:'description',optionsValue:'value',value:data.param.reportName"></select>
+                    </div>
+                </div>
+
+                <!-- Dynamically Controlled Report Parameters -->
+
+                <div class="form-group col-md-2 col-lg-2 col-sm-1 col-xs-12" data-bind="visible: isParameterVisible('effectiveDates')">
+                    <label class="control-lable">Effective From</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control date r-border-zero" id="Fromdate" data-bind="value:data.param.effectiveFrom" autocomplete="off">
+                        <span class="input-group-addon no-bg"><i class="val-star">*</i></span>
+                    </div>
+                </div>
+                <div class="form-group col-md-2 col-lg-2 col-sm-1 col-xs-12" data-bind="visible: isParameterVisible('effectiveDates')">
+                    <label class="control-lable">Effective To</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control date r-border-zero" id="Todate" data-bind="value:data.param.effectiveTo" autocomplete="off">
+                        <span class="input-group-addon no-bg"><i class="val-star">*</i></span>
+                    </div>
+                </div>
+
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('asOfDate')">
+                    <label class="control-lable">As Of Date</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control date r-border-zero" data-bind="value:data.param.asOfDate">
+                        <span class="input-group-addon no-bg"><i class="val-star">*</i></span>
+                    </div>
+                </div>
+
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('division')">
+                    <label>@BYAN.Resource.division</label>
+                    <select class="form-control" id="txtMultidivision" multiple="multiple" data-bind="options:data.divisionList ,optionsText:'description',optionsValue:'value',selectedOptions: selectedDiv, multiselect: {includeSelectAllOption: true}"></select>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('lobs')">
+                    <label>@BYAN.Resource.lobCode</label>
+                    <select class="form-control" id="txtMultiLob" multiple="multiple" data-bind="options:filteredLobList ,optionsText:'description',optionsValue:'value',selectedOptions: selectedLob, multiselect: {includeSelectAllOption: true}"></select>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('products')">
+                    <label>@BYAN.Resource.ProductCode</label>
+                    <select class="form-control" id="txtMultiProducts" multiple="multiple" data-bind="options:data.productList ,optionsText:'description',optionsValue:'value',selectedOptions: selectedProducts, multiselect: {includeSelectAllOption: true}"></select>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('sourceType')">
+                    <label>@BYAN.Resource.sourceType</label>
+                    <select class="form-control" id="txtMultiSourceType" multiple="multiple" data-bind="options:data.sourceTypeList ,optionsText:'description',optionsValue:'value',selectedOptions: selectedSources, multiselect: {includeSelectAllOption: true}"></select>
+                </div>
+
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('customerID')">
+                    <label class="control-lable">Customer ID</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        @*                        <input type="text" class="form-control" id="txtCustCode" name="txtCustCode" data-bind="jqAuto: { value:data.param.customerID,source : CustomerArray, inputProp: 'Description', labelProp: 'Description', valueProp: 'Code'},value:data.param.customerID" />
+                        *@                        @*<input type="text" class="form-control" data-bind="value:data.param.customerID">*@
+                        <input type="text" class="form-control" id="txtCustCode" name="txtCustCode"
+                               data-bind="jqAuto: { value: data.param.customerID, source: CustomerArray, inputProp: 'Description', labelProp: 'Description', valueProp: 'Code' }" />
+
+                        <span class="input-group-addon no-bg"><i class="val-star">*</i></span>
+                    </div>
+                </div>
+
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('policyNo')">
+                    <label class="control-lable">Policy Number</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.policyNo">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('insuredName')">
+                    <label class="control-lable">Insured Name</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.insuredName">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('custTypes')">
+                    <label class="control-lable">Customer Types</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.custTypes">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('codeFrom')">
+                    <label class="control-lable">Code From</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.codeFrom">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('codeTo')">
+                    <label class="control-lable">Code To</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.codeTo">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('crIqama')">
+                    <label class="control-lable">CR/Iqama</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.crIqama">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('year')">
+                    <label class="control-lable">Year (From)</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="number" class="form-control" data-bind="value:data.param.year">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('yearTo')">
+                    <label class="control-lable">Year (To)</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="number" class="form-control" data-bind="value:data.param.yearTo">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('searchBy')">
+                    <label class="control-lable">Search By</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.searchBy">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('searchVal')">
+                    <label class="control-lable">Search Value</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.searchVal">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('DOL')">
+                    <label class="control-lable">Date of Loss</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control date r-border-zero" data-bind="value:data.param.DOL">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('LOSS_DETAILS')">
+                    <label class="control-lable">Loss Details</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.LOSS_DETAILS">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('PAID_AMOUNT')">
+                    <label class="control-lable">Paid Amount</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="number" step="0.01" class="form-control" data-bind="value:data.param.PAID_AMOUNT">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('OS_AMOUNT')">
+                    <label class="control-lable">Outstanding Amount</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="number" step="0.01" class="form-control" data-bind="value:data.param.OS_AMOUNT">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('OUTSTANDING')">
+                    <label class="control-lable">Outstanding Status</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <select class="form-control" data-bind="value:data.param.OUTSTANDING">
+                            <option value="">--Select--</option>
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('CODE_F')">
+                    <label class="control-lable">Code F</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.CODE_F">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('CODE_T')">
+                    <label class="control-lable">Code T</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.CODE_T">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex1')">
+                    <label class="control-lable">Flexible Parameter 1</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex1">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex2')">
+                    <label class="control-lable">Flexible Parameter 2</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex2">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex3')">
+                    <label class="control-lable">Flexible Parameter 3</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex3">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex4')">
+                    <label class="control-lable">Flexible Parameter 4</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex4">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex5')">
+                    <label class="control-lable">Flexible Parameter 5</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex5">
+                    </div>
+                </div>
+                <div class="form-group col-md-3 col-lg-3 col-sm-2 col-xs-12" data-bind="visible: isParameterVisible('flex6')">
+                    <label class="control-lable">Flexible Parameter 6</label>
+                    <div class="no-padding col-sm-12 input-group">
+                        <input type="text" class="form-control" data-bind="value:data.param.flex6">
+                    </div>
+                </div>
+            </div>
+            <div style="text-align:center;" class="mar_T_30">
+                <button class="btn btn-primary btn-sm" data-bind="click:exportExcel"><i class="fa fa-file-excel-o"></i> @BYAN.Resource.exportToExcel</button>
+            </div>
+        </section>
+    </div>
+</div>
+@section Scripts{
+
+    <script src="~/Scripts/multiselect.js"></script>
+    <script>
+        var initialBindingObj;
+        var viewModelData;
+
+        var viewModel = function (bindingData) {
+            var self = this;
+            self.data = ko.mapping.fromJS(bindingData, {});
+
+            // Store the report parameters configuration received from the model
+            // This is crucial for dynamic behavior
+            self.reportParametersConfig = self.data.ReportParametersConfig || {};
+
+            self.activeReportParameters = ko.observableArray([]);
+
+            // isParameterVisible is a regular function to check if a parameter group is active
+            self.isParameterVisible = function(parameterKey) {
+                return self.activeReportParameters().indexOf(parameterKey) > -1;
+            };
+
+            // Knockout observables for multiselect selected values
+            self.selectedProducts = ko.observableArray();
+            self.selectedLob = ko.observableArray();
+            self.selectedDiv = ko.observableArray();
+            self.selectedSources = ko.observableArray();
+
+            self.allReportNames = ko.observableArray(self.data.reportName() || []); // Initial full list
+            self.filteredReportNames = ko.computed(function () {
+                
+                var selectedType = self.data.param.reportType();
+                if (!selectedType) return [];
+
+                return ko.utils.arrayFilter(self.allReportNames(), function (item) {
+                    return item.typeId() == selectedType;
+                });
+            });
+
+            // Keep the original (full) LOB list so we can re-filter it whenever the
+            // selected report type changes.
+            self.allLobList = ko.observableArray(self.data.lobList() || []);
+
+            // The LOB dropdown options now depend on the selected report type.
+            // If the LOB items carry a `typeId` (same convention used for report
+            // names) we filter by it; otherwise we fall back to the full list so
+            // existing data shapes keep working unchanged.
+            self.filteredLobList = ko.computed(function () {
+                var selectedType = self.data.param.reportType();
+                var lobs = self.allLobList();
+
+                if (!selectedType) return lobs;
+                if (!lobs || lobs.length === 0) return lobs;
+
+                // Only filter when the LOB items actually expose a typeId.
+                var hasTypeId = typeof lobs[0].typeId === 'function';
+                if (!hasTypeId) return lobs;
+
+                return ko.utils.arrayFilter(lobs, function (item) {
+                    return item.typeId() == selectedType;
+                });
+            });
+
+            self.CustomerArray = function (searchWord, callback) {
+                data = { SEARCHPARAM: searchWord };
+
+                if (searchWord) {
+                    makeAjaxRequest(baseUrl + "/NMClaims/ClaimProcessor/GetAllCustomers", "GET", data, null, true, null, function (response) {
+                        callback(response);
+                    });
+                }
+            };
+
+            // When the report type changes, reset the LOB selection (and the
+            // products that depend on it) so stale selections from a different
+            // report type don't carry over.
+            self.data.param.reportType.subscribe(function (newValue) {
+                self.selectedLob([]);
+                self.selectedProducts([]);
+                self.data.param.lobs('');
+                self.data.param.products('');
+                // Restore the full product list; it will be re-filtered once a LOB
+                // is picked for the newly selected report type.
+                if (viewModelData) {
+                    self.data.productList(viewModelData.productList);
+                }
+            });
+
+            // Subscribe to changes in the selected Report Name
+            self.data.param.reportName.subscribe(function (newValue) {
+                
+                var paramsForSelectedReport = self.reportParametersConfig[newValue] || [];
+                self.activeReportParameters(paramsForSelectedReport);
+
+                if (!self.isParameterVisible('division')) {
+                    self.selectedDiv([]);
+                }
+                if (!self.isParameterVisible('lobs')) {
+                    self.selectedLob([]);
+                }
+                if (!self.isParameterVisible('products')) {
+                    self.selectedProducts([]);
+                }
+                if (!self.isParameterVisible('sourceType')) {
+                    self.selectedSources([]);
+                }
+            });
+
+            // Trigger the subscription once on initial load to set initial parameter visibility
+            // based on the initially selected report name (if any).
+            setTimeout(function() {
+                self.data.param.reportName.valueHasMutated();
+            }, 0);
+
+
+            self.selectedDiv.subscribe(function (newValue) {
+                if (newValue && newValue.length > 0) {
+                    self.data.param.division(newValue.join());
+                } else {
+                    self.data.param.division('');
+                }
+            });
+
+            self.selectedSources.subscribe(function (newValue) {
+                if (newValue && newValue.length > 0) {
+                    self.data.param.sourceType(newValue.join());
+                } else {
+                    self.data.param.sourceType('');
+                }
+            });
+
+            self.selectedLob.subscribe(function (newvalue) {
+                if (newvalue && newvalue.length > 0) {
+                    var selectedprodcovers = ko.utils.arrayFilter(viewModelData.productList, function (i) {
+                        return newvalue.indexOf(i.dependencyValue) > -1;
+                    });
+                    self.data.productList(selectedprodcovers);
+                    self.data.param.lobs(newvalue.join());
+                } else {
+                    self.data.param.products('');
+                    self.data.param.lobs('');
+                    self.data.productList(viewModelData.productList); // Reset product list to full list if no LOBs selected
+                    self.selectedProducts([]); // Clear selected products
+                }
+            });
+
+            self.selectedProducts.subscribe(function (newValue) {
+                if (newValue && newValue.length > 0) {
+                    self.data.param.products(newValue.join());
+                } else {
+                    self.data.param.products('');
+                }
+            });
+
+            var mainErrorVal = generateValidationRules(self.data.param,
+                [
+                    { p: 'effectiveFrom', vr: { required: {message: "Please select effective from date"} } },
+                    { p: 'effectiveTo', vr: { required: { message: "Please select effective to date"} } },
+           
+                ]);
+            var asofdateVal = generateValidationRules(self.data.param,
+                [
+                    { p: 'asOfDate', vr: { required: { message: "Please select as of date" } } }
+
+                ]);
+
+            self.mainErrors = ko.validatedObservable(mainErrorVal);
+            self.asofdateErrors = ko.validatedObservable(asofdateVal);
+        }
+
+        // Export functions (existing - no changes needed here)
+        viewModel.prototype.exportExcel=function(){
+            var self=this;
+            if (self.mainErrors.errors().length > 0) {
+                if (self.data.param.reportName() == 'CL_GL_REJECTED_CLOSED_CLAIMS_REPORT' || self.data.param.reportName() == 'LEGAL_CASES_REPORT' || self.data.param.reportName() == 'LEGAL_CASES_REPORT_FOR_FGA' ||
+                    self.data.param.reportName() == 'CREDIT_LIFE_OS_CLAIMS' || self.data.param.reportName() == 'GROUP_LIFE_OS_CLAIMS' ||
+                    self.data.param.reportName() == 'RECOVERY_WITH_RI_OS' || self.data.param.reportName() == 'PAID_OS_RECOVERY_RI' || self.data.param.reportName() == 'CL_GL_CLM_RPT' || self.data.param.reportName() == 'NM_LIFE_PERF_REPORT'
+                    || self.data.param.reportName() == 'NM_LIFE_TOPN_LOSSRATIO_REPORT' || self.data.param.reportName() == 'OS_REPORT' || self.data.param.reportName() == 'GL_TIMEBARREID_DETAILS') {
+                    if (self.asofdateErrors.errors().length > 0) {
+                        self.asofdateErrors.errors.showAllMessages(true);
+                        $('#div-report-region').find('.hasKOError').addClass("mandatory").tooltip(valTooltipOpt).tooltip('show');
+                        return;
+                    }
+
+                } else {
+                    self.mainErrors.errors.showAllMessages(true);
+                    $('#div-report-region').find('.hasKOError').addClass("mandatory").tooltip(valTooltipOpt).tooltip('show');
+                    return;
+                }
+               
+            }
+            if (self.data.param.reportName() == 'CL_GL_REJECTED_CLOSED_CLAIMS_REPORT' || self.data.param.reportName() == 'LEGAL_CASES_REPORT' || self.data.param.reportName() == 'LEGAL_CASES_REPORT_FOR_FGA' ||
+                self.data.param.reportName() == 'CREDIT_LIFE_OS_CLAIMS' || self.data.param.reportName() == 'GROUP_LIFE_OS_CLAIMS' ||
+                self.data.param.reportName() == 'RECOVERY_WITH_RI_OS' || self.data.param.reportName() == 'PAID_OS_RECOVERY_RI' || self.data.param.reportName() == 'CL_GL_CLM_RPT' || self.data.param.reportName() == 'NM_LIFE_PERF_REPORT'
+                || self.data.param.reportName() == 'NM_LIFE_TOPN_LOSSRATIO_REPORT' || self.data.param.reportName() == 'OS_REPORT' || self.data.param.reportName() == 'GL_TIMEBARREID_DETAILS') {
+                self.data.param.effectiveFrom('');
+                self.data.param.effectiveTo('');
+            } else {
+                self.data.param.asOfDate('');
+            }
+
+            if (self.data.param.effectiveFrom() || self.data.param.effectiveTo()) {
+                self.data.param.asOfDate('');
+            }
+            var dataToSend = new FormData()
+            dataToSend.append('reportName', $('#REPORT_NAME option:selected').text());
+            dataToSend.append('param', ko.toJSON(self.data.param));
+            showLoader();
+            makeXMLRequest(baseUrl + "/NMClaims/ClaimReports/ExportPCReports", true, "POST", "blob", dataToSend, function (response) {
+                hideLoader();
+                if (response instanceof Blob && response.size === 0) {
+                    showAlert("No Records Found.", true);
+                    return;
+                }
+                downloadFile(response, 'NMCLAIMS_REPORT_' + new Date().getMilliseconds() + (response.type == "text/plain" ? '.txt' : '.xlsx'));
+            });
+        }
+
+        $(document).ready(function () {
+
+            $('#div-report-region').on('focusin focusout', '.mandatory', function (e) {
+                if (e.type == "focusin")
+                {
+                    $(this).tooltip('destroy')
+                }
+            });
+
+            viewModelData = @(Model == null ? Html.Raw("{}") : Html.Raw(Json.Encode(Model)));
+
+            initialBindingObj = new viewModel(viewModelData);
+            //console.log(viewModelData)
+            ko.applyBindings(initialBindingObj, document.getElementById("div-report-region"));
+            // Initialize datepickers for date fields
+            $(".date").datepicker({
+                showOtherMonths: true,
+                selectOtherMonths: true,
+                showAnim: "slideDown",
+                changeMonth: true,
+                changeYear: true,
+                dateFormat: 'dd/mm/yy'
+            }).mask("00/00/0000", { placeholder: "__/__/____" });
+
+        });
+    </script>
+}
