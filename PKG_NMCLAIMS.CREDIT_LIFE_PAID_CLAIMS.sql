@@ -21,7 +21,7 @@ BEGIN
         RC.INSURED_CUST_NAME                              AS [Customer Name Ar],
         RC.ASSURED_NAME                                   AS [Contributor Name],
         RC.LOAN_REF_NO                                    AS [Loan Ref No],
-        FORMAT(RC.DECLARATION_DATE,'dd/MM/yyyy')          AS [Decl Date],
+        FORMAT(RC.DECLARATION_DATE,'dd/MM/yyyy')          AS [Declaration Date],
         FORMAT(RC.LOAN_START_DATE,'dd/MM/yyyy')           AS [Loan Start Date],
         RC.RISK_NAME                                      AS [Risk Name],
         RC.RISK_NAME_AR                                   AS [Risk Name Ar],
@@ -33,13 +33,12 @@ BEGIN
         RC.LOSS_DESCRIPTION                               AS [Loss Description],
         RC.NATURE_OF_LOSS_DESC                            AS [Nature of Loss],
         RC.COVERCODE                                      AS [Cover Code],
-        RC.FAC_CUSTOMERS                                  AS [Reinsurance Name],
-        RC.DECLARATION_DATE                               AS [Declaration Date],
         FORMAT(RC.DR_CAL_APPROVAL,'dd/MM/yyyy')           AS [DR/CAL Approval Date],
         RC.CUSTOMER_CODE                                  AS [Customer Code],
         RC.CIVIL_ID                                       AS [Civil ID],
         RC.OCCUPATION                                     AS [Occupation],
         RC.NATIONALITY                                    AS [Nationality],
+        RC.FAC_CUSTOMERS                                  AS [Reinsurance Name],
         CASE
             WHEN ISNULL(SUM(RC.FAC_PAID),0) <> 0 THEN 'FAC'
             ELSE 'Treaty'
@@ -102,8 +101,9 @@ BEGIN
 
     /*
         Detail rows followed by a TOTAL row appended via UNION ALL.
-        The TOTAL SELECT must expose exactly the same 41 columns, in the same
-        order, as #CREDIT_REPORT. ORDER BY is applied once, after the union.
+        The TOTAL SELECT must expose exactly the same 40 columns, in the same
+        order, as #CREDIT_REPORT. ORDER BY is applied once, after the union,
+        and may only reference columns that are in the select list.
     */
     SELECT *
     FROM #CREDIT_REPORT
@@ -123,7 +123,7 @@ BEGIN
         '',                      -- [Customer Name Ar]
         '',                      -- [Contributor Name]
         '',                      -- [Loan Ref No]
-        '',                      -- [Decl Date]
+        '',                      -- [Declaration Date]
         '',                      -- [Loan Start Date]
         '',                      -- [Risk Name]
         '',                      -- [Risk Name Ar]
@@ -135,13 +135,12 @@ BEGIN
         '',                      -- [Loss Description]
         '',                      -- [Nature of Loss]
         '',                      -- [Cover Code]
-        '',                      -- [Reinsurance Name]
-        NULL,                    -- [Declaration Date]
         '',                      -- [DR/CAL Approval Date]
         '',                      -- [Customer Code]
         '',                      -- [Civil ID]
         '',                      -- [Occupation]
         '',                      -- [Nationality]
+        '',                      -- [Reinsurance Name]
         '',                      -- [Type of RI]
         '',                      -- [Paid Date]
         SUM([Paid Amt]),         -- [Paid Amt]
