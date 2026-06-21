@@ -9,6 +9,10 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    /* ------------------------------------------------------------------ */
+    /* Pass 1: aggregate at claim + cover-code level (one row per cover    */
+    /*         code). This guarantees cover codes are distinct per claim.  */
+    /* ------------------------------------------------------------------ */
     SELECT
         RC.LOB_CODE                                       AS [Class Code],
         RC.LOB                                            AS [Class],
@@ -39,37 +43,14 @@ BEGIN
         RC.OCCUPATION                                     AS [Occupation],
         RC.NATIONALITY                                    AS [Nationality],
         RC.FAC_CUSTOMERS                                  AS [Reinsurance Name],
-        CASE
-            WHEN ISNULL(SUM(RC.FAC_PAID),0) <> 0 THEN 'FAC'
-            ELSE 'Treaty'
-        END                                               AS [Type of RI],
         FORMAT(RC.SETTLED_DATE,'dd/MM/yyyy')              AS [Paid Date],
-
         ISNULL(SUM(RC.PAID_AMT),0)                        AS [Paid Amt],
-
-        CASE
-            WHEN ISNULL(SUM(RC.PAID_AMT),0) = 0 THEN 0
-            ELSE (ISNULL(SUM(RC.RETN_PAID),0) + ISNULL(SUM(RC.RETN_EXCESS_PAID),0)) * 100.0 / SUM(RC.PAID_AMT)
-        END                                               AS [BTIC Share%],
-
-        (ISNULL(SUM(RC.RETN_PAID),0) + ISNULL(SUM(RC.RETN_EXCESS_PAID),0)) AS [BTIC Share],
-
-        CASE
-            WHEN ISNULL(SUM(RC.PAID_AMT),0) = 0 THEN 0
-            ELSE ISNULL(SUM(RC.QS_PAID + RC.SUR_PLUS_PAID),0) * 100.0 / SUM(RC.PAID_AMT)
-        END                                               AS [Treaty Share%],
-
+        ISNULL(SUM(RC.RETN_PAID),0) + ISNULL(SUM(RC.RETN_EXCESS_PAID),0) AS [BTIC Share],
         ISNULL(SUM(RC.QS_PAID),0)                         AS [QS Share],
         ISNULL(SUM(RC.SUR_PLUS_PAID),0)                   AS [SUR Share],
-
-        CASE
-            WHEN ISNULL(SUM(RC.PAID_AMT),0) = 0 THEN 0
-            ELSE ISNULL(SUM(RC.FAC_PAID),0) * 100.0 / SUM(RC.PAID_AMT)
-        END                                               AS [Fac Share%],
-
         ISNULL(SUM(RC.FAC_PAID),0)                        AS [FAC Paid],
         RC.LOAN_TYPE                                      AS [Loan Type]
-    INTO #CREDIT_REPORT
+    INTO #CREDIT_RAW
     FROM VW_NM_CLAIM_DATA RC
     WHERE RC.IS_RECOVERY = 'NO'
       AND CAST(RC.SETTLED_DATE AS DATE) BETWEEN CONVERT(DATE,@P_FROMDATE,103) AND CONVERT(DATE,@P_TODATE,103)
@@ -92,20 +73,84 @@ BEGIN
         RC.POLICY_TODATE,
         RC.LOSS_DESCRIPTION,
         RC.COVERCODE,
-        RC.DECLARATION_DATE,
         RC.DR_CAL_APPROVAL,
         RC.CUSTOMER_CODE,
         RC.CIVIL_ID,
         RC.OCCUPATION,
         RC.NATIONALITY;
 
-    /*
-        Detail rows followed by a TOTAL row appended via UNION ALL.
-        The TOTAL SELECT must expose exactly the same 40 columns, in the same
-        order, as #CREDIT_REPORT. ORDER BY is applied once, after the union,
-        and may only reference columns that are in the select list.
-    */
-    SELECT *
+    /* ------------------------------------------------------------------ */
+    /* Pass 2: collapse cover codes into a single row per claim.          */
+    /*         Cover codes are concatenated with STRING_AGG; money columns */
+    /*         are re-summed; percentages are recomputed from the totals.  */
+    /* ------------------------------------------------------------------ */
+    SELECT
+        [Class Code],
+        [Class],
+        [Sub Class],
+        [Claim No],
+        [Policy No],
+        [Policy FromDate],
+        [Policy ToDate],
+        [Customer Name],
+        [Customer Name Ar],
+        [Contributor Name],
+        [Loan Ref No],
+        [Declaration Date],
+        [Loan Start Date],
+        [Risk Name],
+        [Risk Name Ar],
+        [DOB],
+        [Accident Date],
+        [Incident Date],
+        [Claim Type],
+        [UW Year],
+        [Loss Description],
+        [Nature of Loss],
+        STRING_AGG([Cover Code], ' | ') WITHIN GROUP (ORDER BY [Cover Code]) AS [Cover Code],
+        [DR/CAL Approval Date],
+        [Customer Code],
+        [Civil ID],
+        [Occupation],
+        [Nationality],
+        [Reinsurance Name],
+        CASE WHEN SUM([FAC Paid]) <> 0 THEN 'FAC' ELSE 'Treaty' END AS [Type of RI],
+        [Paid Date],
+        SUM([Paid Amt]) AS [Paid Amt],
+        CASE WHEN SUM([Paid Amt]) = 0 THEN 0
+             ELSE SUM([BTIC Share]) * 100.0 / SUM([Paid Amt]) END AS [BTIC Share%],
+        SUM([BTIC Share]) AS [BTIC Share],
+        CASE WHEN SUM([Paid Amt]) = 0 THEN 0
+             ELSE (SUM([QS Share]) + SUM([SUR Share])) * 100.0 / SUM([Paid Amt]) END AS [Treaty Share%],
+        SUM([QS Share]) AS [QS Share],
+        SUM([SUR Share]) AS [SUR Share],
+        CASE WHEN SUM([Paid Amt]) = 0 THEN 0
+             ELSE SUM([FAC Paid]) * 100.0 / SUM([Paid Amt]) END AS [Fac Share%],
+        SUM([FAC Paid]) AS [FAC Paid],
+        [Loan Type]
+    INTO #CREDIT_REPORT
+    FROM #CREDIT_RAW
+    GROUP BY
+        [Class Code], [Class], [Sub Class], [Claim No], [Policy No],
+        [Policy FromDate], [Policy ToDate], [Customer Name], [Customer Name Ar], [Contributor Name],
+        [Loan Ref No], [Declaration Date], [Loan Start Date], [Risk Name], [Risk Name Ar],
+        [DOB], [Accident Date], [Incident Date], [Claim Type], [UW Year],
+        [Loss Description], [Nature of Loss],
+        [DR/CAL Approval Date], [Customer Code], [Civil ID], [Occupation], [Nationality],
+        [Reinsurance Name], [Paid Date], [Loan Type];
+
+    /* ------------------------------------------------------------------ */
+    /* Final output: detail rows + a single TOTAL row (40 columns).       */
+    /* ------------------------------------------------------------------ */
+    SELECT
+        [Class Code], [Class], [Sub Class], [Claim No], [Policy No],
+        [Policy FromDate], [Policy ToDate], [Customer Name], [Customer Name Ar], [Contributor Name],
+        [Loan Ref No], [Declaration Date], [Loan Start Date], [Risk Name], [Risk Name Ar],
+        [DOB], [Accident Date], [Incident Date], [Claim Type], [UW Year],
+        [Loss Description], [Nature of Loss], [Cover Code], [DR/CAL Approval Date], [Customer Code],
+        [Civil ID], [Occupation], [Nationality], [Reinsurance Name], [Type of RI],
+        [Paid Date], [Paid Amt], [BTIC Share%], [BTIC Share], [Treaty Share%],
+        [QS Share], [SUR Share], [Fac Share%], [FAC Paid], [Loan Type]
     FROM #CREDIT_REPORT
     WHERE [Paid Amt] <> 0
 
