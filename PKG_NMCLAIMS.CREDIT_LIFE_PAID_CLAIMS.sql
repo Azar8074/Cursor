@@ -156,8 +156,7 @@ BEGIN
     FROM #CREDIT_REPORT
     WHERE [Paid Amt] <> 0
     ORDER BY
-        CASE WHEN [Class Code] = 'TOTAL' THEN 1 ELSE 0 END,
-        [Class Code],
+        [Class Code],   -- detail rows are '30', the TOTAL row ('TOTAL') sorts last
         [Claim No];
 
 END;
