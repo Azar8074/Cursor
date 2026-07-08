@@ -1,0 +1,137 @@
+// ============================================================================
+// BACKEND CONTRACT — ClaimProcessorController.BindProcessorRequest
+// ============================================================================
+//
+// CONTEXT
+// ───────
+// The Razor view (Processorlist.cshtml) now uses server-side DataTable.
+// Every page-turn, sort, or search panel submit fires ONE POST to this action.
+// DataTable sends its own paging / sorting parameters PLUS the custom search
+// fields injected via ajax.data.  The action must:
+//   1. Read standard DataTable params (draw, start, length, order).
+//   2. Read custom search params (claimNo, lobcode, …).
+//   3. Apply both in SQL (or LINQ) with proper paging.
+//   4. Return { draw, recordsTotal, recordsFiltered, data }.
+//
+// This completely replaces the old split between BindProcessorRequest (no
+// filters) and BindProcessorRequest2 (filters, no paging). One endpoint does
+// both.  The browser never holds more than one page of rows.
+//
+// ============================================================================
+
+// ─── Input model (MVC model-binds the POST body) ────────────────────────────
+
+public class ProcessorGridRequest
+{
+    // Standard DataTable server-side parameters
+    public int    Draw   { get; set; }
+    public int    Start  { get; set; }   // row offset (0-based)
+    public int    Length { get; set; }   // page size
+
+    // DataTable sends order[0][column] / order[0][dir] as form fields.
+    // If you use the jQuery DataTables .NET helper these map automatically;
+    // otherwise read Request.Form["order[0][column]"] manually.
+    public string SortColumn    { get; set; }
+    public string SortDirection { get; set; }  // "asc" | "desc"
+    public string SearchValue   { get; set; }  // DataTable global search box
+
+    // Custom search-panel fields (nullable — absent means "no filter")
+    public string claimNo        { get; set; }
+    public int?   lobcode        { get; set; }
+    public int?   productcode    { get; set; }
+    public string PolicyNo       { get; set; }
+    public string IntimationDate { get; set; }
+    public string DOL            { get; set; }
+    public string ClaimStatus    { get; set; }
+}
+
+// ─── Response wrapper ────────────────────────────────────────────────────────
+
+public class DataTableResponse<T>
+{
+    public int    draw            { get; set; }
+    public long   recordsTotal    { get; set; }   // total rows in DB (no filter)
+    public long   recordsFiltered { get; set; }   // rows matching current filter
+    public List<T> data           { get; set; }
+}
+
+// ─── Controller action ───────────────────────────────────────────────────────
+
+[HttpPost]
+public ActionResult BindProcessorRequest(ProcessorGridRequest request)
+{
+    try
+    {
+        // ── 1. resolve page size (cap at 500 to prevent abuse) ──────────────
+        int pageSize   = Math.Min(request.Length > 0 ? request.Length : 20, 500);
+        int pageOffset = request.Start >= 0 ? request.Start : 0;
+
+        // ── 2. delegate to your DAL / service (pseudo-code) ─────────────────
+        //
+        // Your DAL method should accept:
+        //   • pageOffset / pageSize         → SQL OFFSET / FETCH NEXT (or ROWNUM)
+        //   • sort column + direction       → ORDER BY clause
+        //   • optional filter fields        → WHERE clause predicates
+        //
+        // It should return (data page, total unfiltered count, total filtered count).
+        //
+        // Example Oracle query pattern using OFFSET/FETCH:
+        //
+        //   SELECT * FROM V_CLAIM_PROCESSOR
+        //   WHERE  (:claimNo       IS NULL OR MAIN_CLAIM_NO  LIKE '%' || :claimNo || '%')
+        //   AND    (:lobcode       IS NULL OR LOB_CODE        = :lobcode)
+        //   AND    (:productcode   IS NULL OR PRODUCT_CODE    = :productcode)
+        //   AND    (:policyNo      IS NULL OR POLICY_NUMBER  LIKE '%' || :policyNo || '%')
+        //   AND    (:claimStatus   IS NULL OR CLAIM_STATUS   LIKE '%' || :claimStatus || '%')
+        //   AND    (:intimationDt  IS NULL OR TRUNC(INTIMATION_DATE) = TO_DATE(:intimationDt,'DD/MM/YYYY'))
+        //   AND    (:dol           IS NULL OR TRUNC(ACCIDENT_DATE)   = TO_DATE(:dol,          'DD/MM/YYYY'))
+        //   ORDER BY MAIN_CLAIM_NO DESC
+        //   OFFSET :offset ROWS FETCH NEXT :pageSize ROWS ONLY;
+        //
+        // Run a second COUNT(*) query with the same WHERE (no ORDER/OFFSET) to
+        // get recordsFiltered.  Cache the total-unfiltered count separately.
+
+        var dalResult = _claimProcessorService.GetProcessorGrid(new ProcessorGridFilter
+        {
+            PageOffset    = pageOffset,
+            PageSize      = pageSize,
+            SortColumn    = request.SortColumn    ?? "MAIN_CLAIM_NO",
+            SortDirection = request.SortDirection ?? "DESC",
+            SearchValue   = request.SearchValue,
+            ClaimNo       = request.claimNo,
+            LobCode       = request.lobcode,
+            ProductCode   = request.productcode,
+            PolicyNo      = request.PolicyNo,
+            IntimationDate= request.IntimationDate,
+            DOL           = request.DOL,
+            ClaimStatus   = request.ClaimStatus
+        });
+
+        return Json(new DataTableResponse<ProcessorGridRow>
+        {
+            draw            = request.Draw,
+            recordsTotal    = dalResult.TotalCount,
+            recordsFiltered = dalResult.FilteredCount,
+            data            = dalResult.Rows
+        });
+    }
+    catch (Exception ex)
+    {
+        // Log ex
+        return Json(new { draw = request.Draw, recordsTotal = 0, recordsFiltered = 0, data = new List<object>() });
+    }
+}
+
+// ─── DB indexing recommendations ─────────────────────────────────────────────
+//
+// To make the SQL above fast add composite indexes on the most-searched columns.
+// Exact match columns first, range/LIKE columns last:
+//
+//   CREATE INDEX IDX_CLAIM_PROC_FILTERS
+//       ON CLAIMS (LOB_CODE, PRODUCT_CODE, CLAIM_STATUS, MAIN_CLAIM_NO);
+//
+//   CREATE INDEX IDX_CLAIM_PROC_DATES
+//       ON CLAIMS (INTIMATION_DATE, ACCIDENT_DATE);
+//
+// If you run Oracle, also ensure the view V_CLAIM_PROCESSOR has no full
+// table-scan joins; check with EXPLAIN PLAN FOR <your SELECT>.

@@ -1,0 +1,621 @@
+@{
+    ViewBag.Title = "Processorlist";
+    Layout = "~/Views/Shared/_Layout.cshtml";
+}
+
+@section Styles{
+    <link href="~/Content/css/jquery-ui.css" rel="stylesheet" />
+    <style>
+        .dt-buttons .btn {
+            margin-right: 10px;
+        }
+
+            .dt-buttons .btn:last-child {
+                margin-right: 0;
+            }
+
+        /* Visual cue: panel dimmed until first search */
+        #processorTableWrapper.awaiting-search {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        #processorTableWrapper .search-prompt {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            font-size: 16px;
+            color: #888;
+        }
+
+        #processorTableWrapper.awaiting-search .search-prompt {
+            display: block;
+        }
+    </style>
+}
+
+<div class="col-md-12">
+    <div id="ProcssorGrid">
+        <div class="panel panel-primary">
+            <header class="panel-heading">
+                Claim Processor
+            </header>
+
+            <div class="form-group" style="display:none;">
+                <button type="button" class="btn btn-success" onclick="SendFOAtoCustomer()">@CACIC.Resource.Send</button>
+            </div>
+
+            <%-- ============================================================
+                 SEARCH PANEL
+                 Kept collapsed by default. "Search" button fires a DataTable
+                 redraw (server-side) instead of a separate AJAX call.
+                 "Clear" resets inputs and redraws.
+                 ============================================================ --%>
+            <div class="collapse clearfix" id="searchPanel">
+                <div style="display:flex;flex-wrap:wrap;align-content:flex-start;">
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">@CACIC.Resource.claimNumber</label>
+                        <input type="text" class="form-control" id="claimNo" placeholder="e.g. CLM-2024-001">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">LOB Code</label>
+                        <input type="text" class="form-control" id="lobcode">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">Product Code</label>
+                        <input type="text" class="form-control" id="productcode">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">Policy No</label>
+                        <input type="text" class="form-control" id="policyno">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">Intimation Date</label>
+                        <input type="text" class="form-control datepicker" id="intimationdate">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">Date of Loss</label>
+                        <input type="text" class="form-control datepicker" id="dol">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-6 col-xs-12">
+                        <label class="control-label">Claim Status</label>
+                        <input type="text" class="form-control" id="claimstatus">
+                    </div>
+                    <div class="form-group col-md-4 col-lg-4 col-sm-1 col-xs-12 cleardiv">
+                        <button class="btn btn-primary btn-sm adj-btn" onclick="applySearch()">
+                            <i class="fa fa-search"></i> @CACIC.Resource.search
+                        </button>
+                        <button class="btn btn-default btn-sm adj-btn" onclick="clearSearch()">
+                            <i class="fa fa-trash"></i> @CACIC.Resource.clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-body" id="processorTableWrapper">
+                <table id="Processorusergrid" style="width:100%" class="table table-bordered table-responsive">
+                    <thead>
+                        <tr>
+                            <th>@CACIC.Resource.claimNumber</th>
+                            <th>@CACIC.Resource.referenceNumber</th>
+                            <th>@CACIC.Resource.ClaimStatus</th>
+                            <th>@CACIC.Resource.policyNumber</th>
+                            <th>Close Reasons</th>
+                            <th>@CACIC.Resource.Insured_Name_En</th>
+                            <th>@CACIC.Resource.intimationDate</th>
+                            <th>Register Date</th>
+                            <th>@CACIC.Resource.intimationUser</th>
+                            <th>@CACIC.Resource.docCompletionDate</th>
+                            <th>@CACIC.Resource.lossDate</th>
+                            <th>@CACIC.Resource.netClaimAmount</th>
+                            <th>@CACIC.Resource.ProductCode</th>
+                            <th>@CACIC.Resource.duration</th>
+                            <th>Lc Number</th>
+                            <th>Vessel Name</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <%-- ====== Finance Pending Modal ====== --%>
+    <div id="FinancePendingModal" class="modal fade" data-backdrop="static">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">Finance Pending</h4>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="col-md-12">
+                        <div class="panel panel-primary">
+                            <header class="panel-heading">Finance Pending Claims</header>
+                            <div class="panel-body">
+                                <table id="ProcessorFinaceusergrid" style="width:100%" class="table table-bordered table-responsive">
+                                    <thead>
+                                        <tr>
+                                            <th>@CACIC.Resource.claimNumber</th>
+                                            <th>@CACIC.Resource.ClaimType</th>
+                                            <th>@CACIC.Resource.processor</th>
+                                            <th>@CACIC.Resource.estimation</th>
+                                            <th>@CACIC.Resource.amount</th>
+                                            <th>@CACIC.Resource.netAmount</th>
+                                            <th>@CACIC.Resource.requestedDate</th>
+                                            <th>@CACIC.Resource.durationDays</th>
+                                            <th>@CACIC.Resource.Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <%-- ====== Finance Return Modal ====== --%>
+    <div id="FinanceReturnModal" class="modal fade" data-backdrop="static">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">Finance Return</h4>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="col-md-12">
+                        <div class="panel panel-primary">
+                            <header class="panel-heading">Finance Return Claims</header>
+                            <div class="panel-body">
+                                <table id="ProcessorFinacereturngrid" style="width:100%" class="table table-bordered table-responsive">
+                                    <thead>
+                                        <tr>
+                                            <th>@CACIC.Resource.claimNumber</th>
+                                            <th>@CACIC.Resource.ClaimType</th>
+                                            <th>@CACIC.Resource.processor</th>
+                                            <th>@CACIC.Resource.estimation</th>
+                                            <th>@CACIC.Resource.amount</th>
+                                            <th>@CACIC.Resource.netAmount</th>
+                                            <th>Returned User</th>
+                                            <th>Returned Date</th>
+                                            <th>Returned Days</th>
+                                            <th>@CACIC.Resource.Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+@section Scripts{
+
+    @Scripts.Render("~/bundles/datatable")
+    <script src="@Url.Content("~/Scripts/DataTables/dataTables.buttons.min.js")"></script>
+    <script src="~/Scripts/DataTables/buttons.html5.min.js"></script>
+    <script src="~/Scripts/DataTables/jszip.min.js"></script>
+    <script src="~/Scripts/DataTables/pdfmake.min.js"></script>
+    <script src="~/Scripts/moment.js"></script>
+    <script src="@Url.Content("~/Scripts/Common.js")"></script>
+    <script src="@Url.Content("~/Scripts/bootstrap-datetimepicker.js")"></script>
+
+    <script>
+        // ─── state ──────────────────────────────────────────────────────────────
+        var virtualDirectory = baseUrl;
+        var Processorusergrid;
+        var ProcessorFinaceusergrid;
+        var ProcessorFinacereturngrid;
+
+        // Holds the current custom search filters.
+        // Updated only when the user clicks "Search" or "Clear".
+        var activeFilters = {};
+
+        // ─── helpers ────────────────────────────────────────────────────────────
+
+        /**
+         * Read every field in the search panel into a plain object.
+         * Numeric fields are cast; empty strings become null so the backend
+         * can treat them as "not supplied".
+         */
+        function readSearchFilters() {
+            var lobRaw     = $.trim($('#lobcode').val());
+            var prodRaw    = $.trim($('#productcode').val());
+            return {
+                claimNo:        $.trim($('#claimNo').val())        || null,
+                lobcode:        lobRaw  ? parseInt(lobRaw,  10) : null,
+                productcode:    prodRaw ? parseInt(prodRaw, 10) : null,
+                PolicyNo:       $.trim($('#policyno').val())       || null,
+                IntimationDate: $.trim($('#intimationdate').val()) || null,
+                DOL:            $.trim($('#dol').val())            || null,
+                ClaimStatus:    $.trim($('#claimstatus').val())    || null
+            };
+        }
+
+        /**
+         * Latch the search filters into activeFilters and force a DataTable
+         * redraw (which will POST to the server with the new filters).
+         * The server does the heavy-lifting: SQL WHERE + paging.
+         */
+        function applySearch() {
+            activeFilters = readSearchFilters();
+            if (Processorusergrid) {
+                Processorusergrid.ajax.reload(null, true);  // reset to page 1
+            }
+        }
+
+        function clearSearch() {
+            $('#searchPanel input').val('');
+            activeFilters = {};
+            if (Processorusergrid) {
+                Processorusergrid.ajax.reload(null, true);
+            }
+        }
+
+        // ─── row-click navigation ────────────────────────────────────────────────
+
+        function ClaimDetailsShow(ele) {
+            var row  = Processorusergrid.row($(ele).closest('tr'));
+            var data = row.data();
+            data['FromClaims'] = true;
+            sessionStorage.setItem("Claimdata", JSON.stringify(data));
+            showLoader("Loading Claim details....!! Please wait");
+            location.href = virtualDirectory + "/NMClaims/ClaimProcessor/ProcessorView";
+        }
+
+        // ─── main grid ──────────────────────────────────────────────────────────
+
+        function initProcessorGrid() {
+
+            var isArabic = sessionStorage.getItem('lang') === "Arabic";
+
+            Processorusergrid = $('#Processorusergrid').DataTable({
+                /*
+                 * SERVER-SIDE PROCESSING
+                 * ──────────────────────────────────────────────────────────────
+                 * Only the current page is fetched on every draw.
+                 * The backend receives:
+                 *   • Standard DataTable params: draw, start, length, order[], columns[]
+                 *   • Custom params injected via ajax.data below: claimNo, lobcode, …
+                 *
+                 * The backend must return:
+                 *   { draw, recordsTotal, recordsFiltered, data: [...] }
+                 *
+                 * This is the key change that makes the grid scale to millions of
+                 * rows without loading them all into the browser.
+                 */
+                processing:  true,
+                serverSide:  true,
+                deferRender: true,
+
+                dom: "<'dt-header' Blf><'scorable' tr><'col-md-5 no-padding'i><'col-md-7 no-padding'p>",
+
+                ajax: {
+                    url:      virtualDirectory + "/NMClaims/ClaimProcessor/BindProcessorRequest",
+                    type:     "POST",
+                    dataType: "JSON",
+
+                    /*
+                     * Inject the custom search-panel values into every DataTable
+                     * server request.  DataTable will send these alongside its own
+                     * paging / sorting parameters.
+                     */
+                    data: function (dtParams) {
+                        return $.extend({}, dtParams, activeFilters);
+                    },
+
+                    dataSrc: function (response) {
+                        if (checkIfSessionExpired(response)) return [];
+                        return response.data;
+                    },
+
+                    error: function (xhr, error, thrown) {
+                        hideLoader();
+                        showAlert("Failed to load data. Please try again.", true);
+                    }
+                },
+
+                lengthMenu: [[10, 20, 50, 100], [10, 20, 50, 100]],
+                pageLength:  20,
+                pagingType:  'full_numbers',
+                order:       [[0, "desc"]],
+
+                language: {
+                    processing:    "<div class='overlay custom-loader-background'><i class='fa fa-cog fa-spin custom-loader-color'></i></div>",
+                    emptyTable:    "@CACIC.Resource.emptyTable",
+                    info:          isArabic ? "إدخالات _TOTAL_ من _END_ إلى _START_ عرض" : "Showing _START_ to _END_ of _TOTAL_ entries",
+                    infoEmpty:     "@CACIC.Resource.dataTableInfoEmpty",
+                    infoFiltered:  "@CACIC.Resource.dataTableInfoFiltered",
+                    sLengthMenu:   isArabic ? "مقاس الصفحه _MENU_" : "Page Size _MENU_",
+                    search:        "",
+                    searchPlaceholder: isArabic ? "بحث" : "Search",
+                    zeroRecords:   "@CACIC.Resource.dataTableZeroRecords",
+                    paginate: { first: '«', previous: '‹', next: '›', last: '»' }
+                },
+
+                drawCallback: function () {
+                    window.dispatchEvent(new Event('resize'));
+                },
+
+                columns: [
+                    {
+                        data: "MAIN_CLAIM_NO",
+                        render: function (data) {
+                            return '<a style="font-weight:600;font-family:sans-serif;cursor:pointer;" onclick="ClaimDetailsShow(this)">'
+                                + (data || '') + '</a>';
+                        }
+                    },
+                    { data: "TEMP_REF_NO" },
+                    {
+                        data: "ClaimStatus",
+                        render: function (data, type, row) {
+                            return renderClaimStatusBadge(row.ClaimStatus);
+                        }
+                    },
+                    { data: "PolicyNumber" },
+                    { data: "CloseReason" },
+                    { data: "ParticipantName" },
+                    { data: "IntimationDate" },
+                    { data: "RegisterDate" },
+                    { data: "IntimationUser" },
+                    { data: "DocCompletionDate" },
+                    { data: "AccidentDate" },
+                    { data: "OSAmount" },
+                    { data: "PRODUCTNAME" },
+                    { data: "Duration" },
+                    { data: "LC_NUMBER" },
+                    { data: "VESSELNAME" }
+                ],
+
+                buttons: [
+                    {
+                        text: 'Pending with Finance',
+                        className: 'btn btn-primary',
+                        action: function () {
+                            GetFinacePendingData();
+                            $("#FinancePendingModal").modal('show');
+                        }
+                    },
+                    {
+                        text: 'Return From Finance',
+                        className: 'btn btn-primary',
+                        action: function () {
+                            GetFinaceReturnData();
+                            $("#FinanceReturnModal").modal('show');
+                        }
+                    },
+                    {
+                        text: 'Search Panel',
+                        className: 'btn btn-primary',
+                        action: function () {
+                            $('#searchPanel').collapse('toggle');
+                        }
+                    }
+                ],
+
+                initComplete: function () {
+                    $(window).scrollTop(0);
+                    window.dispatchEvent(new Event('resize'));
+                    $('#Processorusergrid_filter input').addClass('form-control');
+                    $('#Processorusergrid_length select').addClass('form-select-sm');
+                    $(".dataTables_info").addClass('col-md-6');
+                    $(".dataTables_paginate").addClass('col-md-12');
+                }
+            });
+
+            // Wire the DataTable global search box with debounce so it doesn't
+            // fire a server round-trip on every keystroke.
+            $('#Processorusergrid_filter input')
+                .unbind()
+                .on('input', debounce(function () {
+                    Processorusergrid.search($(this).val()).draw();
+                }, 400));
+        }
+
+        // ─── shared badge renderer ───────────────────────────────────────────────
+
+        function renderClaimStatusBadge(status) {
+            if (!status) return '';
+            var map = {
+                "claim processed":              "label-success",
+                "settled and paid":             "label-success",
+                "settled and partially paid":   "label-success",
+                "under process":                "label-primary",
+                "os incomplete documents":      "label-info",
+                "surveyor draft report approved": "label-warning",
+                "closed":                       "label-danger",
+                "claim rejected":               "label-danger",
+                "suspicious claim":             "label-danger"
+            };
+            var cls = map[status.toLowerCase()] || "label-default";
+            return '<span class="label ' + cls + '">' + status + '</span>';
+        }
+
+        // ─── finance pending grid ────────────────────────────────────────────────
+
+        function GetFinacePendingData() {
+            if ($.fn.DataTable.isDataTable('#ProcessorFinaceusergrid')) {
+                $('#ProcessorFinaceusergrid').DataTable().clear().destroy();
+            }
+
+            ProcessorFinaceusergrid = $('#ProcessorFinaceusergrid').DataTable({
+                processing:  true,
+                serverSide:  true,
+                dom: "<'dt-header' Blf><'scorable' tr><'col-md-5 no-padding'i><'col-md-7 no-padding'p>",
+
+                ajax: {
+                    url:      virtualDirectory + "/NMClaims/ClaimProcessor/BindFinancePendingRequest",
+                    type:     "POST",
+                    dataType: "JSON",
+                    dataSrc: function (response) {
+                        if (checkIfSessionExpired(response)) return [];
+                        return response.data;
+                    }
+                },
+
+                order:      [[0, "desc"]],
+                lengthMenu: [[10, 20, 50], [10, 20, 50]],
+
+                language: buildLanguageConfig(),
+
+                columns: [
+                    { data: "CLAIMNUMBER" },
+                    { data: "CLAIMTYPE" },
+                    { data: "PROCESSOR" },
+                    { data: "ESTIMATION" },
+                    { data: "AMOUNT" },
+                    { data: "NETAMOUNT" },
+                    { data: "REQUESTEDDATE" },
+                    { data: "PENDINGDAYS" },
+                    { data: "CLAIMSTATUS" }
+                ],
+
+                buttons: [
+                    {
+                        text: 'Export Excel',
+                        className: 'btn btn-primary',
+                        action: function () { exportCSVDashBoard(); }
+                    }
+                ],
+
+                drawCallback: function () {
+                    window.dispatchEvent(new Event('resize'));
+                }
+            });
+        }
+
+        // ─── finance return grid ─────────────────────────────────────────────────
+
+        function GetFinaceReturnData() {
+            if ($.fn.DataTable.isDataTable('#ProcessorFinacereturngrid')) {
+                $('#ProcessorFinacereturngrid').DataTable().clear().destroy();
+            }
+
+            ProcessorFinacereturngrid = $('#ProcessorFinacereturngrid').DataTable({
+                processing:  true,
+                serverSide:  true,
+                dom: "<'dt-header' Blf><'scorable' tr><'col-md-5 no-padding'i><'col-md-7 no-padding'p>",
+
+                ajax: {
+                    url:      virtualDirectory + "/NMClaims/ClaimProcessor/BindFinanceReturnRequest",
+                    type:     "POST",
+                    dataType: "JSON",
+                    dataSrc: function (response) {
+                        if (checkIfSessionExpired(response)) return [];
+                        return response.data;
+                    }
+                },
+
+                order:      [[0, "desc"]],
+                lengthMenu: [[10, 20, 50], [10, 20, 50]],
+
+                language: buildLanguageConfig(),
+
+                columns: [
+                    { data: "CLAIMNUMBER" },
+                    { data: "CLAIMTYPE" },
+                    { data: "PROCESSOR" },
+                    { data: "ESTIMATION" },
+                    { data: "AMOUNT" },
+                    { data: "NETAMOUNT" },
+                    { data: "RETURNEDUSER" },
+                    { data: "RETURNEDDATE" },
+                    { data: "RETURNEDDAYS" },
+                    { data: "STATUS" }
+                ],
+
+                buttons: [
+                    {
+                        text: 'Export Excel',
+                        className: 'btn btn-primary',
+                        action: function () { exportCSVDashBoard(); }
+                    }
+                ],
+
+                drawCallback: function () {
+                    window.dispatchEvent(new Event('resize'));
+                }
+            });
+        }
+
+        // ─── utilities ───────────────────────────────────────────────────────────
+
+        function buildLanguageConfig() {
+            var isArabic = sessionStorage.getItem('lang') === "Arabic";
+            return {
+                processing:   "<div class='overlay custom-loader-background'><i class='fa fa-cog fa-spin custom-loader-color'></i></div>",
+                emptyTable:   "@CACIC.Resource.emptyTable",
+                info:         isArabic ? "إدخالات _TOTAL_ من _END_ إلى _START_ عرض" : "Showing _START_ to _END_ of _TOTAL_ entries",
+                infoEmpty:    "@CACIC.Resource.dataTableInfoEmpty",
+                infoFiltered: "@CACIC.Resource.dataTableInfoFiltered",
+                sLengthMenu:  isArabic ? "مقاس الصفحه _MENU_" : "Page Size _MENU_",
+                search:       "@CACIC.Resource.dataTableSearchLabel",
+                zeroRecords:  "@CACIC.Resource.dataTableZeroRecords",
+                paginate:     { first: '«', previous: '‹', next: '›', last: '»' }
+            };
+        }
+
+        /**
+         * Simple debounce: returns a function that delays invoking fn until
+         * after `wait` milliseconds have elapsed since the last call.
+         */
+        function debounce(fn, wait) {
+            var timer;
+            return function () {
+                var ctx = this, args = arguments;
+                clearTimeout(timer);
+                timer = setTimeout(function () { fn.apply(ctx, args); }, wait);
+            };
+        }
+
+        function SendFOAtoCustomer() {
+            showLoader("Processing Your Request...!! Please wait...!!");
+            makeAjaxRequest(
+                virtualDirectory + "/NMClaims/ClaimProcessor/SendFOAtoCustomer",
+                "POST", null, false, true, false,
+                function (result) {
+                    hideLoader();
+                    showAlert(result.stDesc, result.stCode !== "S");
+                }
+            );
+        }
+
+        function exportCSVDashBoard() {
+            showLoader("Processing Your Request... Please wait...");
+            makeXMLRequest(
+                baseUrl + "/NMClaims/ClaimReports/ExcelFinancePendingClaims",
+                true, "POST", "blob",
+                { exportAs: ".xls" },
+                function (response) {
+                    hideLoader();
+                    downloadFile(response, "FinancePendingClaims_" + new Date().toLocaleDateString() + ".xls");
+                }
+            );
+        }
+
+        // ─── boot ────────────────────────────────────────────────────────────────
+
+        $(document).ready(function () {
+            // Wire up date pickers for the two date fields in the search panel.
+            $('.datepicker').datetimepicker({
+                format: 'DD/MM/YYYY',
+                ignoreReadonly: true
+            });
+
+            initProcessorGrid();
+        });
+
+    </script>
+}
