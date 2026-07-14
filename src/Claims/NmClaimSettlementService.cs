@@ -75,6 +75,8 @@ namespace Claims.Services
 
         private async Task<SettlementResult> SettleSingleClaimAsync(TBLCLAIM_PROCESSOR claimProcessor)
         {
+            var failures = new List<string>();
+
             try
             {
                 var claimRequest = new SelectedClaimRequest
@@ -87,10 +89,31 @@ namespace Claims.Services
 
                 var claimEstimation = await GetClaimEstimationForProcessorAsync(claimRequest);
 
-                var selectedRisks = claimEstimation?.claimestimation?.selectedrisks;
-                if (selectedRisks != null)
+                if (claimEstimation == null)
                 {
-                    foreach (var selectedRisk in selectedRisks)
+                    return CreateFailedSettlementResult(
+                        claimProcessor.CLAIM_NO,
+                        "Claim estimation returned no response.");
+                }
+
+                if (string.Equals(claimEstimation.ResultCode, "F", StringComparison.OrdinalIgnoreCase))
+                {
+                    return CreateFailedSettlementResult(
+                        claimProcessor.CLAIM_NO,
+                        claimEstimation.ResultDescription ?? "Unable to retrieve claim estimation.");
+                }
+
+                var selectedRisks = claimEstimation.claimestimation?.selectedrisks;
+                if (selectedRisks == null || !selectedRisks.Any())
+                {
+                    return CreateFailedSettlementResult(
+                        claimProcessor.CLAIM_NO,
+                        "No selected risks were found for settlement.");
+                }
+
+                foreach (var selectedRisk in selectedRisks)
+                {
+                    try
                     {
                         var riskRequest = new SelectedRiskEstRequest
                         {
@@ -100,8 +123,39 @@ namespace Claims.Services
                             USERID = SystemUserId
                         };
 
-                        await ApproveEstimationAsync(riskRequest);
+                        var approvalResponse = await ApproveEstimationAsync(riskRequest);
+
+                        if (approvalResponse == null)
+                        {
+                            failures.Add(
+                                $"Estimation {selectedRisk.EST_ID}: approval returned no response.");
+                        }
+                        else if (!string.Equals(approvalResponse.stCode, "S", StringComparison.OrdinalIgnoreCase))
+                        {
+                            failures.Add(
+                                $"Estimation {selectedRisk.EST_ID}: " +
+                                $"{approvalResponse.stCode ?? "F"} - " +
+                                $"{approvalResponse.stDesc ?? "Approval failed."}");
+                        }
                     }
+                    catch (Exception ex)
+                    {
+                        // A single risk failure must not prevent the remaining
+                        // risks or claims from being processed.
+                        failures.Add(
+                            $"Estimation {selectedRisk.EST_ID}: {ex}");
+                    }
+                }
+
+                if (failures.Count > 0)
+                {
+                    return new SettlementResult
+                    {
+                        IsSuccess = false,
+                        ClaimNo = claimProcessor.CLAIM_NO,
+                        Message = $"Settlement completed with {failures.Count} failed estimation(s).",
+                        ExceptionDetails = string.Join(Environment.NewLine, failures)
+                    };
                 }
 
                 return new SettlementResult
@@ -113,14 +167,19 @@ namespace Claims.Services
             }
             catch (Exception ex)
             {
-                return new SettlementResult
-                {
-                    IsSuccess = false,
-                    ClaimNo = claimProcessor.CLAIM_NO,
-                    Message = "Settlement failed.",
-                    ExceptionDetails = ex.ToString()
-                };
+                return CreateFailedSettlementResult(claimProcessor.CLAIM_NO, ex.ToString());
             }
+        }
+
+        private static SettlementResult CreateFailedSettlementResult(string claimNo, string details)
+        {
+            return new SettlementResult
+            {
+                IsSuccess = false,
+                ClaimNo = claimNo,
+                Message = "Settlement failed.",
+                ExceptionDetails = details
+            };
         }
 
         /// <summary>
@@ -268,8 +327,17 @@ namespace Claims.Services
                     }
                     catch (Exception riExp)
                     {
+                        // FIX: do not continue to the stored procedure/event block,
+                        // where this failure would otherwise be overwritten with
+                        // an "S" response.
+                        isRiValidationHappened = true;
                         response.stCode = "F";
                         response.stDesc = new StackTrace(riExp, true) + " " + riExp.Message;
+
+                        estimation.IS_RI_ALLOCATED = false;
+                        estimation.EST_STATUS = "OS";
+                        estimation.EST_APPROVAL_DATE = null;
+                        await db.SaveChangesAsync();
                     }
                 }
                 else
@@ -313,8 +381,15 @@ namespace Claims.Services
                         _DatabaseUtil.GetParameter("P_USERID", request.USERID)
                     };
 
-                    await db._ExecuteQuery("PKG_NMCLAIMS.SP_NMCLAIMESTAPPROVE", parameters.ToArray(), CommandType.StoredProcedure)
+                    var procedureResponse = await db._ExecuteQuery("PKG_NMCLAIMS.SP_NMCLAIMESTAPPROVE", parameters.ToArray(), CommandType.StoredProcedure)
                         .GetItem<ResponseModel>();
+
+                    if (procedureResponse != null
+                        && !string.IsNullOrWhiteSpace(procedureResponse.stCode)
+                        && !string.Equals(procedureResponse.stCode, "S", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return procedureResponse;
+                    }
 
                     var riAllocationAudit = await db.TBLRICLAIM_ALLOCATION_AUDIT
                         .Where(x => x.POLICY_NO == processor.POLICY_NO
