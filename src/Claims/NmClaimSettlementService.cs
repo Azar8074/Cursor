@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 
@@ -41,7 +40,7 @@ namespace Claims.Services
         /// claim is captured in its own <see cref="SettlementResult"/> and does
         /// not abort the whole batch.
         /// </summary>
-        public async Task<List<SettlementResult>> RunAutomaticSettlementAsync(CancellationToken cancellationToken = default)
+        public async Task<List<SettlementResult>> RunAutomaticSettlementAsync()
         {
             var settlementResults = new List<SettlementResult>();
 
@@ -51,7 +50,7 @@ namespace Claims.Services
                 var pendingClaims = await dbContext.TBLCLAIM_PROCESSOR
                     .AsNoTracking()
                     .Where(x => x.CLAIM_STATUS == StatusUnderProcess && x.SUB_CLAIM_NO != null)
-                    .ToListAsync(cancellationToken);
+                    .ToListAsync();
 
                 if (pendingClaims.Count == 0)
                 {
@@ -67,14 +66,14 @@ namespace Claims.Services
 
                 foreach (var claimProcessor in pendingClaims)
                 {
-                    settlementResults.Add(await SettleSingleClaimAsync(claimProcessor, cancellationToken));
+                    settlementResults.Add(await SettleSingleClaimAsync(claimProcessor));
                 }
             }
 
             return settlementResults;
         }
 
-        private async Task<SettlementResult> SettleSingleClaimAsync(TBLCLAIM_PROCESSOR claimProcessor, CancellationToken cancellationToken)
+        private async Task<SettlementResult> SettleSingleClaimAsync(TBLCLAIM_PROCESSOR claimProcessor)
         {
             try
             {
@@ -86,7 +85,7 @@ namespace Claims.Services
                     USERID = SystemUserId
                 };
 
-                var claimEstimation = await GetClaimEstimationForProcessorAsync(claimRequest, cancellationToken);
+                var claimEstimation = await GetClaimEstimationForProcessorAsync(claimRequest);
 
                 var selectedRisks = claimEstimation?.claimestimation?.selectedrisks;
                 if (selectedRisks != null)
@@ -101,7 +100,7 @@ namespace Claims.Services
                             USERID = SystemUserId
                         };
 
-                        await ApproveEstimationAsync(riskRequest, cancellationToken);
+                        await ApproveEstimationAsync(riskRequest);
                     }
                 }
 
@@ -130,8 +129,7 @@ namespace Claims.Services
         /// authority for the current user and the various claim amount views.
         /// </summary>
         public async Task<ClaimDetailsForProcessorResponse> GetClaimEstimationForProcessorAsync(
-            SelectedClaimRequest request,
-            CancellationToken cancellationToken = default)
+            SelectedClaimRequest request)
         {
             var response = new ClaimDetailsForProcessorResponse();
             var claimEstimations = new ClaimEstimation();
@@ -150,7 +148,7 @@ namespace Claims.Services
                     // NullReferenceException for a missing/invalid claim.
                     var processor = await db.TBLCLAIM_PROCESSOR
                         .Where(p => p.SUB_CLAIM_NO == request.subclaimno && p.PARTICIPANT_ID == request.PARTICIPANT_ID)
-                        .FirstOrDefaultAsync(cancellationToken);
+                        .FirstOrDefaultAsync();
 
                     if (processor == null)
                     {
@@ -160,17 +158,17 @@ namespace Claims.Services
                         return response;
                     }
 
-                    var higherRole = await ResolveUserRolesAsync(db, request, cancellationToken);
+                    var higherRole = await ResolveUserRolesAsync(db, request);
 
-                    claimEstimations.policyRisks.AddRange(await GetPolicyRisksAsync(db, processor, cancellationToken));
-                    claimEstimations.estimates = await GetEstimationDropdownsAsync(db, processor, cancellationToken);
+                    claimEstimations.policyRisks.AddRange(await GetPolicyRisksAsync(db, processor));
+                    claimEstimations.estimates = await GetEstimationDropdownsAsync(db, processor);
 
-                    await ApplyCustomerDetailsAsync(db, processor, claimEstimations, cancellationToken);
+                    await ApplyCustomerDetailsAsync(db, processor, claimEstimations);
 
                     // FIX: always give the response an ApprovalManager. The original
                     // only created it when an approver row existed, yet later code
                     // unconditionally wrote to response.approvalmanager -> NRE.
-                    response.approvalmanager = await BuildApprovalManagerAsync(db, request, cancellationToken);
+                    response.approvalmanager = await BuildApprovalManagerAsync(db, request);
 
                     ApplyRiskApprovalFlags(claimEstimations, response.approvalmanager, higherRole, estimationDate);
 
@@ -203,8 +201,7 @@ namespace Claims.Services
         /// gracefully instead of throwing a NullReferenceException.
         /// </summary>
         public async Task<ResponseModel> ApproveEstimationAsync(
-            SelectedRiskEstRequest request,
-            CancellationToken cancellationToken = default)
+            SelectedRiskEstRequest request)
         {
             // FIX: the original method referenced `response` without ever
             // declaring it, so it could not compile. Declare it up front.
@@ -215,7 +212,7 @@ namespace Claims.Services
             using (var db = new _DBContext())
             {
                 var estimation = await db.TBLCLAIMESTIMATION
-                    .FirstOrDefaultAsync(e => e.EST_ID == request.EST_ID, cancellationToken);
+                    .FirstOrDefaultAsync(e => e.EST_ID == request.EST_ID);
 
                 // FIX: guard against a missing estimation before dereferencing it.
                 if (estimation == null)
@@ -230,10 +227,10 @@ namespace Claims.Services
                 var claimRiskDetail = await db.TBLNMCLAIMRISKDETAIL
                     .Where(rp => rp.EST_ID == request.EST_ID)
                     .Select(s => s.RISK_NO)
-                    .FirstOrDefaultAsync(cancellationToken);
+                    .FirstOrDefaultAsync();
 
                 var processor = await db.TBLCLAIM_PROCESSOR
-                    .FirstOrDefaultAsync(x => x.CLAIM_NO == estimation.CLAIM_NO && x.PARTICIPANT_ID == estimation.PARTICIPANT_ID, cancellationToken);
+                    .FirstOrDefaultAsync(x => x.CLAIM_NO == estimation.CLAIM_NO && x.PARTICIPANT_ID == estimation.PARTICIPANT_ID);
 
                 // FIX: guard against a missing processor before using POLICY_NO.
                 if (processor == null)
@@ -246,14 +243,14 @@ namespace Claims.Services
                 var policyAllocation = await db.TBLFACT_RIPREM_ALLOC.AsNoTracking()
                     .Where(x => x.POLICY_NO == processor.POLICY_NO)
                     .Select(s => s.ALLOCATION_BASIS)
-                    .FirstOrDefaultAsync(cancellationToken);
+                    .FirstOrDefaultAsync();
 
                 estimation.EST_STATUS = "Approved";
                 estimation.IS_AML_PASSED = false;
                 estimation.EST_APPROVAL_DATE = db.GetServerDate();
                 // FIX: removed the redundant db.Entry(estimation).CurrentValues.SetValues(estimation);
                 // the entity is already tracked, SaveChanges alone persists the changes.
-                await db.SaveChangesAsync(cancellationToken);
+                await db.SaveChangesAsync();
 
                 if (string.Equals(previousStatus, "ri approved", StringComparison.OrdinalIgnoreCase))
                 {
@@ -300,13 +297,13 @@ namespace Claims.Services
                     {
                         isRiValidationHappened = true;
                         ApplyReinsuranceValidationFailure(estimation, response, riExp);
-                        await db.SaveChangesAsync(cancellationToken);
+                        await db.SaveChangesAsync();
                     }
                 }
 
                 if (!isRiValidationHappened)
                 {
-                    response.mdlobj = await HasSalvageRecoveryEstimationAsync(db, estimation, cancellationToken);
+                    response.mdlobj = await HasSalvageRecoveryEstimationAsync(db, estimation);
 
                     var parameters = new List<IDataParameter>
                     {
@@ -326,7 +323,7 @@ namespace Claims.Services
                                     && x.CLAIM_NO == processor.CLAIM_NO
                                     && x.ESTIMATION_CODE == request.SETTLE_ID)
                         .OrderByDescending(s => s.TRANS_ID)
-                        .FirstOrDefaultAsync(cancellationToken);
+                        .FirstOrDefaultAsync();
 
                     if (riAllocationAudit != null)
                     {
@@ -346,7 +343,7 @@ namespace Claims.Services
                             USERID = request.USERID
                         });
 
-                        await db.SaveChangesAsync(cancellationToken);
+                        await db.SaveChangesAsync();
 
                         response.stCode = "S";
                         response.stDesc = "Reserve Approved Successfully..!!";
@@ -383,7 +380,7 @@ namespace Claims.Services
         /// Sets the processor role id on the request and returns the highest
         /// "supervisory" role the user holds (empty when none).
         /// </summary>
-        private static async Task<string> ResolveUserRolesAsync(_DBContext db, SelectedClaimRequest request, CancellationToken cancellationToken)
+        private static async Task<string> ResolveUserRolesAsync(_DBContext db, SelectedClaimRequest request)
         {
             var higherRole = string.Empty;
 
@@ -393,12 +390,12 @@ namespace Claims.Services
             var roleIds = await db.TBLUSERROLE
                 .Where(x => x.USERID == request.USERID)
                 .Select(s => s.ROLEID)
-                .ToListAsync(cancellationToken);
+                .ToListAsync();
 
             var roleNames = await db.TBLROLEMASTER
                 .Where(r => roleIds.Contains(r.ROLEID))
                 .Select(r => new { r.ROLEID, r.ROLENAME })
-                .ToListAsync(cancellationToken);
+                .ToListAsync();
 
             foreach (var role in roleNames)
             {
@@ -418,7 +415,7 @@ namespace Claims.Services
             return higherRole;
         }
 
-        private static async Task<List<RiskDropdown>> GetPolicyRisksAsync(_DBContext db, TBLCLAIM_PROCESSOR processor, CancellationToken cancellationToken)
+        private static async Task<List<RiskDropdown>> GetPolicyRisksAsync(_DBContext db, TBLCLAIM_PROCESSOR processor)
         {
             // Only product 5030 sourced policy risks in the original code.
             if (processor.PRODUCT_CODE != "5030")
@@ -441,7 +438,7 @@ namespace Claims.Services
                     RISK_LOCATION = s.ADDRESS,
                     RISK_EFF_FROM = s.EFFECTIVE_FROM,
                     RISK_EFFF_TO = s.EFFECTIVE_TO
-                }).Distinct().ToListAsync(cancellationToken);
+                }).Distinct().ToListAsync();
 
             return risks
                 .Select(s => new RiskDropdown
@@ -456,7 +453,7 @@ namespace Claims.Services
                 .ToList();
         }
 
-        private static Task<List<EstimationDropDown>> GetEstimationDropdownsAsync(_DBContext db, TBLCLAIM_PROCESSOR processor, CancellationToken cancellationToken)
+        private static Task<List<EstimationDropDown>> GetEstimationDropdownsAsync(_DBContext db, TBLCLAIM_PROCESSOR processor)
         {
             return (
                 from es in db.TBLESTIMATION.AsNoTracking()
@@ -472,13 +469,13 @@ namespace Claims.Services
                     IS_DEDUCT_ALLOWED = es.ESTIMATION_TYPE == "Payment" && es.ISSURVEY != true,
                     EST_TYPE = es.ESTIMATION_TYPE,
                     ISSURVEY = es.ISSURVEY
-                }).ToListAsync(cancellationToken);
+                }).ToListAsync();
         }
 
-        private static async Task ApplyCustomerDetailsAsync(_DBContext db, TBLCLAIM_PROCESSOR processor, ClaimEstimation claimEstimations, CancellationToken cancellationToken)
+        private static async Task ApplyCustomerDetailsAsync(_DBContext db, TBLCLAIM_PROCESSOR processor, ClaimEstimation claimEstimations)
         {
             var customer = await db.TBLCUSTOMER
-                .FirstOrDefaultAsync(c => c.CUST_CODE == processor.CUSTOMER_CODE, cancellationToken);
+                .FirstOrDefaultAsync(c => c.CUST_CODE == processor.CUSTOMER_CODE);
 
             if (customer != null)
             {
@@ -487,10 +484,10 @@ namespace Claims.Services
             }
         }
 
-        private static async Task<ApprovalManager> BuildApprovalManagerAsync(_DBContext db, SelectedClaimRequest request, CancellationToken cancellationToken)
+        private static async Task<ApprovalManager> BuildApprovalManagerAsync(_DBContext db, SelectedClaimRequest request)
         {
             var approverCheck = await db.TBLCLAIM_APPROVALAUTHORITY
-                .FirstOrDefaultAsync(a => a.APPROVAL_FOR == "NMEstimation" && a.APPROVER_ROLEID == request.ROLEID, cancellationToken);
+                .FirstOrDefaultAsync(a => a.APPROVAL_FOR == "NMEstimation" && a.APPROVER_ROLEID == request.ROLEID);
 
             if (approverCheck == null)
             {
@@ -626,14 +623,14 @@ namespace Claims.Services
             }
         }
 
-        private static async Task<bool> HasSalvageRecoveryEstimationAsync(_DBContext db, TBLCLAIMESTIMATION estimation, CancellationToken cancellationToken)
+        private static async Task<bool> HasSalvageRecoveryEstimationAsync(_DBContext db, TBLCLAIMESTIMATION estimation)
         {
             // FIX: evaluate directly in the database rather than loading all rows
             // and looping in memory.
             return await db.TBLESTIMATION
                 .AnyAsync(e => e.ESTIMATION_CODE == estimation.ESTIMATION_CODE
                                && e.ESTIMATION_TYPE == "Recovery"
-                               && e.IS_SALVAGE == true, cancellationToken);
+                               && e.IS_SALVAGE == true);
         }
     }
 }
