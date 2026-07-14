@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -129,13 +130,28 @@ namespace Claims.Services
                         {
                             failures.Add(
                                 $"Estimation {selectedRisk.EST_ID}: approval returned no response.");
+                            continue;
                         }
-                        else if (!string.Equals(approvalResponse.stCode, "S", StringComparison.OrdinalIgnoreCase))
+
+                        if (!string.Equals(approvalResponse.stCode, "S", StringComparison.OrdinalIgnoreCase))
                         {
                             failures.Add(
                                 $"Estimation {selectedRisk.EST_ID}: " +
                                 $"{approvalResponse.stCode ?? "F"} - " +
                                 $"{approvalResponse.stDesc ?? "Approval failed."}");
+                            continue;
+                        }
+
+                        // Reserve was approved ("Reserve Approved Successfully..!!"),
+                        // so pull the beneficiary data and persist it automatically.
+                        var beneficiaryResponse = await SubmitBeneficiaryDetailsAsync(claimProcessor, selectedRisk);
+
+                        if (beneficiaryResponse == null
+                            || !string.Equals(beneficiaryResponse.stCode, "S", StringComparison.OrdinalIgnoreCase))
+                        {
+                            failures.Add(
+                                $"Estimation {selectedRisk.EST_ID}: reserve approved but beneficiary update failed - " +
+                                $"{beneficiaryResponse?.stDesc ?? "no response"}");
                         }
                     }
                     catch (Exception ex)
@@ -434,9 +450,610 @@ namespace Claims.Services
             return response;
         }
 
+        /// <summary>
+        /// After a reserve is approved, loads the existing beneficiary details for
+        /// the estimation and writes them back through
+        /// <see cref="UpdateBeneficiaryDetailsAsync"/>. Any failure is returned as a
+        /// non-success <see cref="ResponseModel"/> rather than being thrown, so the
+        /// surrounding settlement batch keeps running.
+        /// </summary>
+        private async Task<ResponseModel> SubmitBeneficiaryDetailsAsync(TBLCLAIM_PROCESSOR claimProcessor, ClaimRisk selectedRisk)
+        {
+            try
+            {
+                var bindRequest = new BeneficiaryBindRequest
+                {
+                    CLAIM_NO = claimProcessor.CLAIM_NO,
+                    SUB_CLAIM_NO = claimProcessor.SUB_CLAIM_NO,
+                    PARTICIPANT_ID = claimProcessor.PARTICIPANT_ID,
+                    EST_ID = selectedRisk.EST_ID
+                };
+
+                var beneficiaryData = await GetExistingBeneficiaryDetailsAsync(bindRequest);
+
+                if (beneficiaryData == null)
+                {
+                    return new ResponseModel
+                    {
+                        stCode = "F",
+                        stDesc = "Beneficiary details could not be loaded."
+                    };
+                }
+
+                var updateRequest = BuildBeneficiaryUpdateRequest(beneficiaryData, claimProcessor, selectedRisk);
+
+                return await UpdateBeneficiaryDetailsAsync(updateRequest);
+            }
+            catch (Exception ex)
+            {
+                return new ResponseModel
+                {
+                    stCode = "F",
+                    stDesc = ex.ToString()
+                };
+            }
+        }
+
+        /// <summary>
+        /// Maps the loaded beneficiary details onto an update request.
+        ///
+        /// NOTE: the source (<see cref="GetExistingBeneficiaryDetailsAsync"/>) does
+        /// not expose address fields (ADDR_1/ADDR_2/CITY_CODE/STATE_CODE) or a scalar
+        /// share-holder name, so those are left null. Verify this is acceptable for
+        /// your automatic-settlement flow before relying on it in production.
+        /// PAYEE_NAME is populated from PAYEE_CODENAME ("PREMIA_CODE~CUST_NAME"),
+        /// which matches the "~"-split lookup performed by the update method.
+        /// </summary>
+        private static UpdateBeneficiaryRequest BuildBeneficiaryUpdateRequest(BindBenfResponse beneficiary, TBLCLAIM_PROCESSOR claimProcessor, ClaimRisk selectedRisk)
+        {
+            return new UpdateBeneficiaryRequest
+            {
+                CLAIM_NO = claimProcessor.CLAIM_NO,
+                PARTICIPANT_ID = claimProcessor.PARTICIPANT_ID,
+                EST_ID = selectedRisk.EST_ID,
+                USERID = SystemUserId,
+
+                CUST_CODE = beneficiary.CUST_CODE,
+                PAYEE_NAME = beneficiary.PAYEE_CODENAME,
+                PAYMENT_MODE = beneficiary.PAYMENT_MODE,
+                COVER_CODE = beneficiary.COVER_CODE,
+                RISK_ID = beneficiary.RISK_ID,
+                EST_AMOUNT = beneficiary.EST_AMOUNT,
+                EST_DATE = beneficiary.ESTIMATION_DATE,
+
+                BENF_NAME = beneficiary.BENF_NAME,
+                BENF_MOBILE = beneficiary.BENF_MOBILENO,
+                BENF_REMARKS = beneficiary.BENF_REMARKS,
+                RESIDENCE_ID = beneficiary.RESIDENCE_ID,
+                COUNTRY_CODE = beneficiary.COUNTRY_CODE,
+                PIN_CODE = beneficiary.PIN_CODE,
+                NATIONALITY_ID = beneficiary.NAT_CODE,
+                ID_CRNO = beneficiary.CR_NO,
+
+                CHEQUE_CITY = beneficiary.CHEQUECITY_CODE,
+                BANK_NAME = beneficiary.BANK_CODE,
+                IBAN_NO = beneficiary.IBAN,
+
+                IS_VAT_APPLICABLE = beneficiary.IS_VAT_APPLICABLE,
+                VAT_PERCENT = beneficiary.VAT_PERCENT,
+                VAT_AMOUNT = beneficiary.VAT_AMOUNT,
+                INVOICE_NO = beneficiary.INVOICE_NO,
+                INVOICE_DATE = beneficiary.INVOICE_DATE,
+                VAT_RES_NO = beneficiary.VAT_RES_NO,
+
+                IS_BENF_INDIVIDUAL = beneficiary.IS_BENF_INDIVIDUAL,
+                IS_BENF_SAUDI = beneficiary.IS_BENF_SAUDI,
+                IS_OWNED_BY_SAUDI = beneficiary.IS_OWNED_BY_SAUDI,
+                NATIVE_ID = beneficiary.NATIVE_ID,
+                NATIVE_TAX_NO = beneficiary.NATIVE_TAX_NO,
+                VAT_REQ_NO = beneficiary.VAT_REQ_NO,
+                PERC_OF_SHARE = beneficiary.PERC_OF_SHARE,
+                HOME_TAX_REQ_NO = beneficiary.HOME_TAX_REQ_NO,
+                HOME_CR_NO = beneficiary.HOME_CR_NO,
+
+                corporatebenfdetail = beneficiary.corporatebenfdetail ?? new List<CorporateBenf>()
+            };
+        }
+
+        /// <summary>
+        /// Persists the beneficiary details for a claim estimation (renamed from
+        /// <c>UpdateBenfDetails</c>). Now declares its own <see cref="ResponseModel"/>,
+        /// guards against a missing payee/estimation and writes correctly to the new
+        /// beneficiary entity when inserting rows.
+        /// </summary>
+        public async Task<ResponseModel> UpdateBeneficiaryDetailsAsync(UpdateBeneficiaryRequest request)
+        {
+            // FIX: the original referenced `response` without declaring it.
+            var response = new ResponseModel();
+
+            if (request == null)
+            {
+                response.stCode = "F";
+                response.stDesc = "No beneficiary request supplied.";
+                return response;
+            }
+
+            // Only parse the string date when one was provided; otherwise keep
+            // whatever INVOICE_DATE the caller already set.
+            if (!string.IsNullOrWhiteSpace(request.STRINVOICEDATE))
+            {
+                string[] formats =
+                {
+                    "dd/MM/yyyy", "dd/MM/yyyy h:mm:ss tt", "dd-MM-yyyy", "d/M/yyyy", "d-M-yyyy",
+                    "d-MMM-yy", "d-MMMM-yyyy", "M/d/yyyy", "M-d-yyyy", "MM/dd/yyyy", "MM-dd-yyyy", "yyyy-dd-MM"
+                };
+
+                if (DateTime.TryParseExact(request.STRINVOICEDATE, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var invoiceDate))
+                {
+                    request.INVOICE_DATE = invoiceDate;
+                }
+            }
+
+            long? payeeCode = 0;
+
+            using (var db = new _DBContext())
+            {
+                // FIX: null-safe access to PAYEE_NAME.
+                var payeeName = request.PAYEE_NAME ?? string.Empty;
+
+                if (payeeName.Contains("~"))
+                {
+                    var payee = payeeName.Split('~')[0];
+                    payeeCode = await db.TBLACSUBACCCODESMASTER
+                        .Where(x => x.SUBACCCODE == payee)
+                        .Select(s => s.COMPANY)
+                        .FirstOrDefaultAsync();
+                }
+                else
+                {
+                    payeeCode = await db.TBLACSUBACCCODESMASTER
+                        .Where(x => x.SUBACCNAME == payeeName || x.SUBACCNAME_BL == payeeName)
+                        .Select(s => s.COMPANY)
+                        .FirstOrDefaultAsync();
+                }
+
+                if (payeeCode == null)
+                {
+                    response.stCode = "F";
+                    response.stDesc = "Could not add Beneficiary Details.";
+                    return response;
+                }
+
+                var claimEstimation = await db.TBLCLAIMESTIMATION
+                    .FirstOrDefaultAsync(e => e.CLAIM_NO == request.CLAIM_NO
+                                              && e.PARTICIPANT_ID == request.PARTICIPANT_ID
+                                              && e.EST_ID == request.EST_ID);
+
+                if (claimEstimation == null)
+                {
+                    response.stCode = "F";
+                    response.stDesc = "Claim estimation not found for beneficiary update.";
+                    return response;
+                }
+
+                claimEstimation.CUSTOMER_CODE = request.CUST_CODE;
+                claimEstimation.PAYEECODE = payeeCode == 0 ? request.CUST_CODE : payeeCode;
+                claimEstimation.PAYMENT_MODE = request.PAYMENT_MODE;
+                claimEstimation.IS_BENF_SUBMITTED = true;
+
+                var serverDate = db.GetServerDate();
+                var corporateDetails = request.corporatebenfdetail ?? new List<CorporateBenf>();
+
+                var existingBenf = await db.NMCLAIMBENFDETAIL
+                    .FirstOrDefaultAsync(e => e.CLAIM_NO == request.CLAIM_NO
+                                              && e.PARTICIPANT_ID == request.PARTICIPANT_ID
+                                              && e.EST_ID == request.EST_ID);
+
+                if (existingBenf != null)
+                {
+                    if (corporateDetails.Any())
+                    {
+                        // Preserves the original behaviour of updating the single
+                        // existing row per corporate entry (last entry wins).
+                        foreach (var corporate in corporateDetails)
+                        {
+                            PopulateBeneficiary(existingBenf, request, corporate, payeeCode, serverDate);
+                        }
+                    }
+                    else
+                    {
+                        PopulateBeneficiary(existingBenf, request, null, payeeCode, serverDate);
+                    }
+
+                    response.stDesc = "Beneficiary Details Updated Successfully..!!";
+                }
+                else
+                {
+                    var nextBenfId = 1;
+                    if (await db.NMCLAIMBENFDETAIL.AnyAsync())
+                    {
+                        nextBenfId = await db.NMCLAIMBENFDETAIL.MaxAsync(m => m.BENF_ID) + 1;
+                    }
+
+                    if (corporateDetails.Any())
+                    {
+                        foreach (var corporate in corporateDetails)
+                        {
+                            var newBenf = CreateBeneficiary(request, corporate, payeeCode, serverDate, nextBenfId);
+                            db.NMCLAIMBENFDETAIL.Add(newBenf);
+                            nextBenfId++;
+                        }
+                    }
+                    else
+                    {
+                        var newBenf = CreateBeneficiary(request, null, payeeCode, serverDate, nextBenfId);
+                        db.NMCLAIMBENFDETAIL.Add(newBenf);
+                    }
+
+                    response.stDesc = "Beneficiary Details Saved Successfully..!!";
+                }
+
+                var settlements = await db.TBLCLAIMSETTLEMENT
+                    .Where(x => x.CLAIM_NO == request.CLAIM_NO
+                                && x.PARTICIPANT_ID == request.PARTICIPANT_ID
+                                && x.EST_ID == request.EST_ID)
+                    .ToListAsync();
+
+                foreach (var settlement in settlements)
+                {
+                    settlement.IS_BENF_SUBMITTED = true;
+                    settlement.PAYEECODE = payeeCode;
+                }
+
+                try
+                {
+                    db.TBLCLAIMEVENT.Add(new TBLCLAIMEVENT
+                    {
+                        CLAIM_NO = request.CLAIM_NO,
+                        PARTICIPANT_ID = request.PARTICIPANT_ID,
+                        EVENT_TYPE = " Benificary Added",
+                        EVENT_DATE = serverDate,
+                        TRANSDATE = serverDate,
+                        USERID = request.USERID
+                    });
+
+                    await db.SaveChangesAsync();
+                    response.stCode = "S";
+                }
+                catch (Exception dbex)
+                {
+                    response.stCode = "F";
+                    response.stDesc = dbex.Message;
+                }
+
+                response.mdlobj = claimEstimation;
+            }
+
+            return response;
+        }
+
+        /// <summary>
+        /// Loads the existing beneficiary details plus supporting dropdowns for a
+        /// claim estimation (renamed from <c>BindExistBenfDetails</c>). Hardened
+        /// against missing processor/estimation/beneficiary rows.
+        /// </summary>
+        public async Task<BindBenfResponse> GetExistingBeneficiaryDetailsAsync(BeneficiaryBindRequest request)
+        {
+            var response = new BindBenfResponse();
+
+            using (var db = new _DBContext())
+            {
+                response.losslocation.cities.AddRange(await db.TBLCITY.AsNoTracking()
+                    .Select(x => new CityDropDown { citycode = x.CIT_CODE, citydesc = x.CIT_NAME_EN, citydesc_bl = x.CIT_SHORT_NAME_BL })
+                    .ToListAsync());
+                response.losslocation.countries.AddRange(await db.TBLCOUNTRY.AsNoTracking()
+                    .Select(x => new CountryDropDown { COUNTRY_CODE = x.COUNTRY_CODE, COUNTRY_DESC_EN = x.COUNTRY_DESC_EN, COUNTRY_DESC_BL = x.COUNTRY_DESC_BL })
+                    .ToListAsync());
+                response.losslocation.states = await db.TBLSTREET.AsNoTracking()
+                    .Select(s => new StateDropDown { statecode = s.STREET_CODE, statedesc = s.STREET_DESC_EN, statedesc_bl = s.STREET_DESC_BL })
+                    .ToListAsync();
+
+                response.paymentmodes.Add(new PaymentMode { PYMT_CODE = 1, PYMT_DESC_EN = "TRANSFER" });
+                response.paymentmodes.Add(new PaymentMode { PYMT_CODE = 2, PYMT_DESC_EN = "Cheque" });
+
+                response.chequecities.AddRange(await db.TBLCITY.AsNoTracking()
+                    .Where(x => x.CHEQUE_CITY == "1")
+                    .Select(x => new ChequeCity { CIT_CODE = x.CIT_CODE, CIT_NAME_EN = x.CIT_NAME_EN, CIT_NAME_BL = x.CIT_SHORT_NAME_BL })
+                    .ToListAsync());
+
+                response.banks = await db.TBLBANK.AsNoTracking()
+                    .Select(s => new Bank { BANK_CODE = s.BANK_CODE, BANK_NAME_EN = s.BANK_NAME_EN, BANK_NAME_BL = s.BANK_NAME_BL })
+                    .ToListAsync();
+
+                var processor = await db.TBLCLAIM_PROCESSOR.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.SUB_CLAIM_NO == request.SUB_CLAIM_NO && x.PARTICIPANT_ID == request.PARTICIPANT_ID);
+
+                if (processor == null)
+                {
+                    // No processor -> nothing meaningful to bind.
+                    return response;
+                }
+
+                var estimation = await db.TBLCLAIMESTIMATION.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.SUB_CLAIM_NO == request.SUB_CLAIM_NO && x.PARTICIPANT_ID == request.PARTICIPANT_ID && x.EST_ID == request.EST_ID);
+
+                response.settlelist = await db.TBLCLAIMSETTLEMENT.AsNoTracking()
+                    .Where(x => x.SUB_CLAIM_NO == request.SUB_CLAIM_NO && x.PARTICIPANT_ID == request.PARTICIPANT_ID && x.EST_ID == request.EST_ID)
+                    .Select(s => new settless { SETTLED_STATUS = s.SETTLED_STATUS })
+                    .ToListAsync();
+
+                response.IS_BENF_SETTLED = response.settlelist.Any(item => item.SETTLED_STATUS == "settled");
+
+                var vatPercent = await db.TBLPROD_VATMASTER.AsNoTracking()
+                    .Where(x => x.PRODUCT_CODE == processor.PRODUCT_CODE)
+                    .OrderByDescending(s => s.TRANSDATE)
+                    .FirstOrDefaultAsync();
+
+                response.nationalities.AddRange(await db.TBLNATIONALITY.AsNoTracking()
+                    .Select(x => new NationalDropDown { NAT_CODE = x.NAT_CODE, NAT_DESC_EN = x.NAT_DESC_EN, NAT_DESC_BL = x.NAT_DESC_BL })
+                    .ToListAsync());
+
+                var estimationDetails = await db.TBLCLAIMESTIMATION.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.EST_ID == request.EST_ID && x.SUB_CLAIM_NO == request.SUB_CLAIM_NO);
+
+                var benfdetail = await db.NMCLAIMBENFDETAIL.AsNoTracking()
+                    .FirstOrDefaultAsync(e => e.SUB_CLAIM_NO == request.SUB_CLAIM_NO && e.PARTICIPANT_ID == request.PARTICIPANT_ID && e.EST_ID == request.EST_ID);
+
+                // FIX: without a beneficiary row there is nothing to bind, and the
+                // original code threw a NullReferenceException here.
+                if (benfdetail == null || estimation == null || estimationDetails == null)
+                {
+                    return response;
+                }
+
+                response.pol_BankDetailsList.Add(new Bank { BANK_CODE = benfdetail.BANK_CODE, BANK_NAME_EN = benfdetail.BENF_NAME_EN });
+
+                var nmClaimRiskDetail = await db.TBLNMCLAIMRISKDETAIL.AsNoTracking()
+                    .Where(e => e.SUB_CLAIM_NO == request.SUB_CLAIM_NO && e.PARTICIPANT_ID == request.PARTICIPANT_ID && e.EST_ID == request.EST_ID)
+                    .Select(s => s.RISK_NO)
+                    .FirstOrDefaultAsync();
+
+                var deductible = estimationDetails.DEDUCTIBLE_AMOUNT ?? 0;
+                var netAmount = (estimation.EST_AMOUNT - deductible).RoundUp();
+
+                decimal? vatAmount = 0M;
+                if (vatPercent != null)
+                {
+                    vatAmount = (Convert.ToDecimal(vatPercent.TAX_VALUE) * netAmount) / 100;
+                }
+
+                response.SUB_CLAIM_NO = request.SUB_CLAIM_NO;
+                response.PARTICIPANT_ID = request.PARTICIPANT_ID;
+                response.EST_ID = request.EST_ID;
+                response.EST_TYPE = estimationDetails.EST_TYPE;
+                response.EST_AMOUNT = netAmount;
+                response.ESTIMATION_DATE = estimation.ESTIMATION_DATE;
+
+                var surveyCustCode = await db.TBLCLAIM_SURVEY
+                    .Where(x => x.CLAIM_NO == request.CLAIM_NO)
+                    .Select(x => x.SURVEY_CUST_CODE)
+                    .FirstOrDefaultAsync();
+
+                if (surveyCustCode != null && estimationDetails.ESTIMATION_CODE == 27)
+                {
+                    response.CUST_CODE = Convert.ToInt64(surveyCustCode);
+                }
+                else
+                {
+                    response.CUST_CODE = benfdetail.CUST_CODE;
+                }
+
+                response.IS_BENF_SUBMITTED = estimation.IS_BENF_SUBMITTED;
+                response.CUST_CODENAME = await db.TBLCUSTOMER.AsNoTracking()
+                    .Where(x => x.CUST_CODE == response.CUST_CODE)
+                    .Select(s => s.CUST_NAME)
+                    .FirstOrDefaultAsync();
+                response.PAYEE_CODE = benfdetail.PAYEE_CODE;
+
+                if (response.PAYEE_CODE > 0)
+                {
+                    response.PAYEE_CODENAME = await db.TBLCUSTOMER.AsNoTracking()
+                        .Where(x => x.CUST_CODE == response.PAYEE_CODE)
+                        .Select(s => s.PREMIA_CODE + "~" + s.CUST_NAME)
+                        .FirstOrDefaultAsync();
+                }
+                else
+                {
+                    response.PAYEE_CODENAME = await db.TBLCUSTOMER.AsNoTracking()
+                        .Where(x => x.CUST_CODE == response.CUST_CODE)
+                        .Select(s => s.PREMIA_CODE + "~" + s.CUST_NAME)
+                        .FirstOrDefaultAsync();
+                }
+
+                if (response.PAYEE_CODENAME.HasValue())
+                {
+                    response.pol_BankDetailsList.Add(new Bank { BANK_CODE = response.PAYEE_CODENAME, BANK_NAME_EN = response.PAYEE_CODENAME });
+                }
+                if (benfdetail.BANK_CODE.HasValue())
+                {
+                    response.pol_BankDetailsList.Add(new Bank { BANK_CODE = benfdetail.BANK_CODE, BANK_NAME_EN = benfdetail.BENF_NAME_EN });
+                }
+
+                response.RISK_ID = nmClaimRiskDetail != 0 ? nmClaimRiskDetail : 0;
+                response.COVER_CODE = estimation.COVERCODE ?? "";
+
+                if (benfdetail.VAT_AMOUNT == null)
+                {
+                    response.VAT_PERCENT = vatPercent?.TAX_VALUE;
+                    response.VAT_AMOUNT = vatAmount;
+                    response.IS_VAT_APPLICABLE = false;
+                }
+                else
+                {
+                    response.VAT_PERCENT = benfdetail.VAT_PERCENT;
+                    response.VAT_AMOUNT = benfdetail.VAT_AMOUNT;
+                    response.INVOICE_NO = benfdetail.INVOICE_NO;
+                    response.INVOICE_DATE = benfdetail.INVOICE_DATE;
+                    response.VAT_RES_NO = benfdetail.VAT_REQ_NO;
+                    response.IS_VAT_APPLICABLE = true;
+                }
+
+                response.COUNTRY_CODE = benfdetail.COUNTRY_CODE;
+                response.PIN_CODE = benfdetail.PIN_CODE;
+                response.NAT_CODE = benfdetail.NAT_CODE ?? 0;
+                response.CR_NO = benfdetail.CR_NO;
+
+                if (benfdetail.BENF_NAME_EN == null)
+                {
+                    response.BENF_NAME = await (from pp in db.TBLPOLICY.AsNoTracking().Where(x => x.POLICY_NO == processor.POLICY_NO)
+                                                join ass in db.TBLASSURED.AsNoTracking() on pp.ASSURED_ID equals ass.CODE
+                                                select ass.AS_NAME).FirstOrDefaultAsync();
+                }
+                else
+                {
+                    response.BENF_NAME = benfdetail.BENF_NAME_EN;
+                }
+
+                if (benfdetail.BENF_MOBILENO == null)
+                {
+                    response.BENF_MOBILENO = await db.TBLCUSTOMER.AsNoTracking()
+                        .Where(x => x.CUST_CODE == response.CUST_CODE)
+                        .Select(s => s.MOBILE)
+                        .FirstOrDefaultAsync();
+                }
+                else
+                {
+                    response.BENF_MOBILENO = benfdetail.BENF_MOBILENO;
+                }
+
+                response.BENF_REMARKS = benfdetail.BENF_REMARKS;
+                response.RESIDENCE_ID = benfdetail.RESIDENCE_ID;
+                response.PAYMENT_MODE = benfdetail.PAYMENT_MODE;
+                response.CHEQUECITY_CODE = benfdetail.CHEQUECITY_CODE;
+
+                response.IBAN = benfdetail.IBAN ?? await db.TBLCUSTOMER_BANK.AsNoTracking()
+                    .Where(x => x.CUST_CODE == response.CUST_CODE)
+                    .Select(s => s.IBAN_NO)
+                    .FirstOrDefaultAsync();
+
+                response.BANK_CODE = benfdetail.BANK_CODE ?? await db.TBLCUSTOMER_BANK.AsNoTracking()
+                    .Where(x => x.CUST_CODE == response.CUST_CODE)
+                    .Select(s => s.BANK_CODE)
+                    .FirstOrDefaultAsync();
+
+                response.IS_BENF_INDIVIDUAL = benfdetail.IS_BENF_INDIVIDUAL;
+                response.IS_BENF_SAUDI = benfdetail.IS_BENF_SAUDI;
+                response.IS_OWNED_BY_SAUDI = benfdetail.IS_OWNED_BY_SAUDI;
+                response.NATIVE_ID = benfdetail.NATIVE_ID;
+                response.NATIVE_TAX_NO = benfdetail.NATIVE_TAX_NO;
+                response.VAT_REQ_NO = benfdetail.VAT_REQ_NO;
+                response.PERC_OF_SHARE = benfdetail.PERC_OF_SHARE;
+                response.HOME_TAX_REQ_NO = benfdetail.HOME_TAX_REQ_NO ?? "";
+                response.HOME_CR_NO = benfdetail.HOME_CR_NO ?? "";
+
+                response.corporatebenfdetail.AddRange(await db.NMCLAIMBENFDETAIL.AsNoTracking()
+                    .Where(x => x.SUB_CLAIM_NO == request.SUB_CLAIM_NO && x.PARTICIPANT_ID == request.PARTICIPANT_ID && x.EST_ID == request.EST_ID)
+                    .Select(s => new CorporateBenf
+                    {
+                        CR_NO = s.CR_NO,
+                        NAT_CODE = s.NAT_CODE,
+                        HOME_CR_NO = s.HOME_CR_NO == "null" ? null : s.HOME_CR_NO,
+                        HOME_TAX_REQ_NO = s.HOME_TAX_REQ_NO == "null" ? null : s.HOME_TAX_REQ_NO,
+                        PERC_OF_SHARE = s.PERC_OF_SHARE,
+                        HOME_SHARE_HOLDER = s.NAME_SHARE_HOLDER == "null" ? null : s.NAME_SHARE_HOLDER
+                    })
+                    .ToListAsync());
+
+                var parameters = new List<IDataParameter>
+                {
+                    _DatabaseUtil.GetParameter("P_VIEWNAME", "VW_GETCLAIMCUSTOMERS")
+                };
+
+                response.PolicyList = await db._ExecuteQuery("PKG_NMCLAIMS.SP_GETNMCLAIMSVIEWS", parameters.ToArray(), CommandType.StoredProcedure)
+                    .GetItems<PolicyList>();
+            }
+
+            return response;
+        }
+
         // ---------------------------------------------------------------------
         // Private helpers
         // ---------------------------------------------------------------------
+
+        private static void PopulateBeneficiary(NMCLAIMBENFDETAIL benf, UpdateBeneficiaryRequest request, CorporateBenf corporate, long? payeeCode, DateTime serverDate)
+        {
+            benf.CUST_CODE = request.CUST_CODE;
+            benf.PAYEE_CODE = payeeCode == 0 ? request.CUST_CODE : payeeCode;
+            benf.ADDRESS1 = request.ADDR_1;
+            benf.ADDRESS2 = request.ADDR_2;
+            benf.CIT_CODE = request.CITY_CODE;
+            benf.STATE_CODE = request.STATE_CODE;
+            benf.COUNTRY_CODE = request.COUNTRY_CODE;
+            benf.PIN_CODE = request.PIN_CODE;
+            benf.NAT_CODE = request.NATIONALITY_ID;
+            benf.CR_NO = corporate != null ? corporate.CR_NO : request.ID_CRNO;
+            benf.BENF_NAME_EN = request.BENF_NAME;
+            benf.BENF_NAME_BL = request.BENF_NAME;
+            benf.BENF_MOBILENO = request.BENF_MOBILE;
+            benf.RESIDENCE_ID = request.RESIDENCE_ID;
+            benf.PAYMENT_MODE = request.PAYMENT_MODE;
+            benf.BENF_REMARKS = request.BENF_REMARKS;
+
+            if (request.PAYMENT_MODE == "CHEQUE")
+            {
+                benf.CHEQUECITY_CODE = request.CHEQUE_CITY;
+                benf.BANK_CODE = string.Empty;
+                benf.IBAN = string.Empty;
+            }
+            else
+            {
+                benf.BANK_CODE = request.BANK_NAME;
+                benf.IBAN = request.IBAN_NO;
+                benf.CHEQUECITY_CODE = string.Empty;
+            }
+
+            benf.TRANSDATE = serverDate;
+            benf.IS_BENF_INDIVIDUAL = request.IS_BENF_INDIVIDUAL;
+            benf.IS_BENF_SAUDI = request.IS_BENF_SAUDI;
+            benf.IS_OWNED_BY_SAUDI = request.IS_OWNED_BY_SAUDI;
+            benf.NATIVE_ID = request.NATIVE_ID;
+            benf.NATIVE_TAX_NO = request.NATIVE_TAX_NO;
+
+            if (request.IS_VAT_APPLICABLE == true)
+            {
+                benf.VAT_PERCENT = request.VAT_PERCENT;
+                benf.VAT_AMOUNT = request.VAT_AMOUNT;
+                benf.INVOICE_NO = request.INVOICE_NO;
+                benf.INVOICE_DATE = request.INVOICE_DATE;
+                benf.VAT_REQ_NO = request.VAT_RES_NO;
+            }
+            else
+            {
+                benf.VAT_PERCENT = null;
+                benf.VAT_AMOUNT = null;
+                benf.INVOICE_NO = null;
+                benf.INVOICE_DATE = null;
+                benf.VAT_REQ_NO = null;
+            }
+
+            benf.PERC_OF_SHARE = corporate != null ? corporate.PERC_OF_SHARE : request.PERC_OF_SHARE;
+            benf.HOME_TAX_REQ_NO = (corporate != null ? corporate.HOME_TAX_REQ_NO : request.HOME_TAX_REQ_NO) ?? "";
+            benf.HOME_CR_NO = (corporate != null ? corporate.HOME_CR_NO : request.HOME_CR_NO) ?? "";
+            benf.NAME_SHARE_HOLDER = corporate != null ? corporate.HOME_SHARE_HOLDER : request.NAME_SHARE_HOLDER;
+        }
+
+        private static NMCLAIMBENFDETAIL CreateBeneficiary(UpdateBeneficiaryRequest request, CorporateBenf corporate, long? payeeCode, DateTime serverDate, int benfId)
+        {
+            // FIX: the original insert paths wrote several fields to the wrong
+            // (null) `benfdetail` instance instead of the new row, which threw a
+            // NullReferenceException. All fields now populate the new entity.
+            var benf = new NMCLAIMBENFDETAIL
+            {
+                BENF_ID = benfId,
+                CLAIM_NO = request.CLAIM_NO,
+                PARTICIPANT_ID = request.PARTICIPANT_ID,
+                EST_ID = request.EST_ID,
+                COVER_CODE = request.COVER_CODE,
+                EST_AMOUNT = request.EST_AMOUNT,
+                EST_DATE = request.EST_DATE,
+                RISK_ID = request.RISK_ID,
+                USERID = request.USERID
+            };
+
+            PopulateBeneficiary(benf, request, corporate, payeeCode, serverDate);
+
+            return benf;
+        }
 
         private static async Task<List<ClaimRisk>> GetClaimRisksAsync(_DBContext db, SelectedClaimRequest request)
         {
